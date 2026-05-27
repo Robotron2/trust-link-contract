@@ -84,8 +84,7 @@ fn test_fee_rounds_to_zero_on_one_stroop_resolve_dispute_release() {
 
     let id = client.create_escrow(&seller, &resolver, &token, &1_i128, &300_u32, &3600_u64);
     client.fund_escrow(&id, &buyer);
-    // Advance past dispute_deadline (funded_at + 172800) so raise_dispute is allowed
-    env.ledger().set_timestamp(env.ledger().timestamp() + 172801);
+    // raise_dispute must be called within the dispute window (< 172800s after funding)
     client.raise_dispute(
         &id,
         &Symbol::new(&env, "fraud"),
@@ -111,8 +110,7 @@ fn test_fee_rounds_to_zero_on_one_stroop_resolve_dispute_refund() {
 
     let id = client.create_escrow(&seller, &resolver, &token, &1_i128, &300_u32, &3600_u64);
     client.fund_escrow(&id, &buyer);
-    // Advance past dispute_deadline (funded_at + 172800) so raise_dispute is allowed
-    env.ledger().set_timestamp(env.ledger().timestamp() + 172801);
+    // raise_dispute must be called within the dispute window (< 172800s after funding)
     client.raise_dispute(
         &id,
         &Symbol::new(&env, "fraud"),

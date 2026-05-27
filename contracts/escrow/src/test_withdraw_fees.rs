@@ -38,8 +38,6 @@ fn test_withdraw_fees_after_multiple_escrows() {
     for _ in 0..3 {
         let id = client.create_escrow(&seller, &resolver, &token, &1000_i128, &100_u32, &3600_u64);
         client.fund_escrow(&id, &buyer);
-        
-        // Advance time to allow confirm_delivery
         env.ledger().set_timestamp(env.ledger().timestamp() + 172801);
         client.confirm_delivery(&id);
     }

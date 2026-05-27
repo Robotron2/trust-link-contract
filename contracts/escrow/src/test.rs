@@ -87,7 +87,7 @@ fn test_confirm_delivery() {
 
     let id = client.create_escrow(&seller, &resolver, &token, &1000_i128, &200_u32, &3600_u64);
     client.fund_escrow(&id, &buyer);
-    
+
     // Advance time to allow confirm_delivery
     env.ledger().set_timestamp(env.ledger().timestamp() + 172801);
     client.confirm_delivery(&id);
@@ -224,6 +224,12 @@ fn test_multiple_escrows() {
     assert_eq!(id2, 2u64);
 }
 
+fn register_alt_token(env: &Env) -> (Address, Address) {
+    let admin = Address::generate(env);
+    let token_address = env.register_stellar_asset_contract(admin.clone());
+    (token_address, admin)
+}
+
 #[test]
 fn test_create_escrow_with_non_usdc_token() {
     let (env, seller, _buyer, resolver, _admin, _token, fee_collector) = setup_env();
@@ -247,7 +253,7 @@ fn test_fund_and_confirm_delivery_with_non_usdc_token() {
     mint_tokens(&env, &alt_token, &buyer, 1000);
     let id = client.create_escrow(&seller, &resolver, &alt_token, &300_i128, &100_u32, &3600_u64);
     client.fund_escrow(&id, &buyer);
-    
+
     // Advance time to allow confirm_delivery
     env.ledger().set_timestamp(env.ledger().timestamp() + 172801);
     client.confirm_delivery(&id);
@@ -266,7 +272,7 @@ fn test_zero_fee_no_collector_transfer() {
     mint_tokens(&env, &token, &buyer, 1000);
     let id = client.create_escrow(&seller, &resolver, &token, &1000_i128, &0_u32, &3600_u64);
     client.fund_escrow(&id, &buyer);
-    
+
     // Advance time to allow confirm_delivery
     env.ledger().set_timestamp(env.ledger().timestamp() + 172801);
     client.confirm_delivery(&id);
@@ -312,7 +318,7 @@ fn test_dispute_before_deadline_succeeds() {
 
     let escrow = client.get_escrow(&id);
     let funded_at = escrow.funded_at;
-    
+
     // Advance time to 47h59m after funding (172740 seconds = 48*3600 - 60)
     env.ledger().set_timestamp(funded_at + 172740);
 
@@ -339,7 +345,7 @@ fn test_dispute_after_deadline_fails() {
 
     let escrow = client.get_escrow(&id);
     let funded_at = escrow.funded_at;
-    
+
     // Advance time to 48h after funding (172800 seconds = 48*3600)
     env.ledger().set_timestamp(funded_at + 172800);
 
@@ -364,7 +370,7 @@ fn test_auto_release_after_dispute_deadline() {
 
     let escrow = client.get_escrow(&id);
     let funded_at = escrow.funded_at;
-    
+
     // Advance time past both dispute deadline (48h) and shipping window (1h)
     env.ledger().set_timestamp(funded_at + 172800 + 3600);
 
@@ -393,17 +399,11 @@ fn test_auto_release_before_dispute_deadline_fails() {
 
     let escrow = client.get_escrow(&id);
     let funded_at = escrow.funded_at;
-    
+
     // Advance time past shipping window (1h) but before dispute deadline (48h)
     env.ledger().set_timestamp(funded_at + 3600);
 
     // Auto-release should fail because dispute window is still open
     let res = client.try_auto_release(&id);
     assert!(matches!(res, Err(Ok(ContractError::DisputeWindowClosed))));
-}
-
-fn register_alt_token(env: &Env) -> (Address, Address) {
-    let admin = Address::generate(env);
-    let token_address = env.register_stellar_asset_contract(admin.clone());
-    (token_address, admin)
 }
