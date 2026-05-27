@@ -15,6 +15,7 @@ pub enum DataKey {
     Dispute(u64),
     ArbitrationFee,
     TotalArbitrationFees(Address),
+    IsPaused,
 }
 
 #[contracttype]
@@ -70,6 +71,7 @@ pub enum ContractError {
     DisputeNotFound = 11,
     ArithmeticError = 12,
     DisputeWindowClosed = 13,
+    Paused = 14,
 }
 
 /// Complete escrow record containing all transaction details and current state.
@@ -176,6 +178,7 @@ impl Escrow {
     }
 
     pub fn withdraw_fees(env: Env, token: Address, to: Address, amount: i128) -> Result<(), ContractError> {
+        check_not_paused(&env)?;
         let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("not initialized");
         admin.require_auth();
 
@@ -246,6 +249,7 @@ impl Escrow {
         fee_bps: u32,
         shipping_window: u64,
     ) -> Result<u64, ContractError> {
+        check_not_paused(&env)?;
         seller.require_auth();
 
         if amount <= 0 {
@@ -287,6 +291,7 @@ impl Escrow {
     }
 
     pub fn fund_escrow(env: Env, escrow_id: u64, buyer: Address) -> Result<(), ContractError> {
+        check_not_paused(&env)?;
         buyer.require_auth();
 
         let mut escrow: EscrowData = env
@@ -315,6 +320,7 @@ impl Escrow {
     }
 
     pub fn confirm_delivery(env: Env, escrow_id: u64) -> Result<(), ContractError> {
+        check_not_paused(&env)?;
         let escrow: EscrowData = env
             .storage()
             .instance()
@@ -350,6 +356,7 @@ impl Escrow {
         description: soroban_sdk::String,
         evidence_hash: soroban_sdk::BytesN<32>,
     ) -> Result<(), ContractError> {
+        check_not_paused(&env)?;
         let escrow: EscrowData = env
             .storage()
             .instance()
@@ -391,6 +398,7 @@ impl Escrow {
     }
 
     pub fn resolve_dispute(env: Env, escrow_id: u64, resolution: ResolutionType) -> Result<(), ContractError> {
+        check_not_paused(&env)?;
         let mut escrow: EscrowData = env
             .storage()
             .instance()
@@ -454,6 +462,7 @@ impl Escrow {
     }
 
     pub fn auto_release(env: Env, escrow_id: u64) -> Result<(), ContractError> {
+        check_not_paused(&env)?;
         let escrow: EscrowData = env
             .storage()
             .instance()
@@ -523,6 +532,29 @@ impl Escrow {
     pub fn get_total_arbitration_fees(env: Env, token: Address) -> i128 {
         env.storage().instance().get(&DataKey::TotalArbitrationFees(token)).unwrap_or(0)
     }
+
+    pub fn pause_contract(env: Env) {
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("not initialized");
+        admin.require_auth();
+        env.storage().instance().set(&DataKey::IsPaused, &true);
+    }
+
+    pub fn unpause_contract(env: Env) {
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("not initialized");
+        admin.require_auth();
+        env.storage().instance().set(&DataKey::IsPaused, &false);
+    }
+
+    pub fn is_paused(env: Env) -> bool {
+        env.storage().instance().get(&DataKey::IsPaused).unwrap_or(false)
+    }
+}
+
+fn check_not_paused(env: &Env) -> Result<(), ContractError> {
+    if env.storage().instance().get(&DataKey::IsPaused).unwrap_or(false) {
+        return Err(ContractError::Paused);
+    }
+    Ok(())
 }
 
 mod test;
@@ -532,3 +564,4 @@ mod test_escrow_id;
 mod test_resolution;
 mod test_overflow;
 mod test_arbitration_fee;
+mod test_pause;
