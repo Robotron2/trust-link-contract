@@ -1,8 +1,10 @@
 #![no_std]
 use soroban_sdk::{contract, contracterror, contractimpl, contracttype, token, Address, Env};
 
+/// Maximum protocol fee in basis points (300 = 3%).
 const MAX_FEE_BPS: u32 = 300;
 
+/// Storage keys for persisting escrow data and the global escrow counter.
 #[contracttype]
 pub enum DataKey {
     Admin,
@@ -68,16 +70,25 @@ pub enum ContractError {
     DisputeWindowClosed = 13,
 }
 
+/// Complete escrow record containing all transaction details and current state.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EscrowData {
+    /// Address of the seller who will receive funds upon successful completion.
     pub seller: Address,
+    /// Address of the buyer who funds the escrow. None until the escrow is funded.
     pub buyer: Option<Address>,
+    /// Address of the trusted third-party resolver who can mediate disputes.
     pub resolver: Address,
+    /// Address of the token contract (SEP-41 compliant) used for the escrow.
     pub token: Address,
+    /// Amount of tokens locked in the escrow.
     pub amount: i128,
+    /// Protocol fee in basis points (100 = 1%).
     pub fee_bps: u32,
+    /// Time window in seconds after funding during which auto-release is not allowed.
     pub shipping_window: u64,
+    /// Ledger timestamp when the escrow was funded. Zero if not yet funded.
     pub funded_at: u64,
     pub dispute_deadline: u64,
     pub state: EscrowState,
@@ -92,20 +103,29 @@ pub struct FeesWithdrawn {
     pub timestamp: u64,
 }
 
+/// Lifecycle states of an escrow transaction.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EscrowState {
+    /// Escrow created but not yet funded by a buyer.
     Pending,
+    /// Escrow funded and awaiting delivery confirmation or dispute.
     Funded,
+    /// Escrow successfully completed with funds released to the seller.
     Completed,
+    /// Escrow in dispute, awaiting resolver decision.
     Disputed,
+    /// Escrow refunded to the buyer after dispute resolution.
     Refunded,
 }
 
+/// Protocol fee configuration.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FeeConfig {
+    /// Address that receives protocol fees.
     pub collector: Address,
+    /// Maximum allowed fee in basis points.
     pub max_fee_bps: u32,
 }
 
@@ -182,6 +202,38 @@ impl Escrow {
         Ok(())
     }
 
+    /// Creates a new escrow transaction in the Pending state.
+    ///
+    /// This function initializes an escrow with the specified parameters and assigns it
+    /// a unique sequential ID. The escrow remains in the Pending state until a buyer
+    /// funds it via `fund_escrow`.
+    ///
+    /// # Arguments
+    ///
+    /// * `env` - The Soroban environment providing access to ledger state and storage.
+    /// * `seller` - The address that will receive funds upon successful completion.
+    /// * `resolver` - The address authorized to resolve disputes if they arise.
+    /// * `token` - The address of the SEP-41 token contract to be used for payment.
+    /// * `amount` - The quantity of tokens to be locked in escrow (must be positive).
+    /// * `fee_bps` - Protocol fee in basis points (100 = 1%, max 300 = 3%).
+    /// * `shipping_window` - Duration in seconds after funding before auto-release is permitted.
+    ///
+    /// # Returns
+    ///
+    /// Returns the unique escrow ID (u32) assigned to this escrow. IDs start at 1 and
+    /// increment sequentially.
+    ///
+    /// # Errors
+    ///
+    /// This function panics if:
+    /// - The seller address fails authentication (does not sign the transaction).
+    /// - The `fee_bps` exceeds the maximum allowed fee (300 basis points).
+    /// - Storage operations fail (extremely rare in normal operation).
+    ///
+    /// # Auth
+    ///
+    /// Requires authorization from the `seller` address. The seller must sign this
+    /// transaction to prove they are creating the escrow.
     pub fn create_escrow(
         env: Env,
         seller: Address,
@@ -250,7 +302,7 @@ impl Escrow {
         escrow.dispute_deadline = escrow.funded_at + 172800;
 
         let token_client = token::Client::new(&env, &escrow.token);
-        token_client.transfer(&buyer, &env.current_contract_address(), &escrow.amount);
+        token_client.transfer(&buyer, env.current_contract_address(), &escrow.amount);
 
         env.storage()
             .instance()
