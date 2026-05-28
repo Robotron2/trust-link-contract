@@ -36,3 +36,84 @@ fn test_escrow_ids_monotonic_and_unique() {
     let next_id = client2.create_escrow(&seller, &resolver, &token, &100_i128, &0_u32, &3600_u64);
     assert_eq!(next_id, 11);
 }
+
+// Verify multiple sequential creation returns correct IDs
+#[test]
+fn test_escrow_ids_increment_sequentially() {
+    let (env, admin, seller, resolver, token, fee_collector) = setup_env();
+    let contract_id = env.register(Escrow, ());
+    let client = EscrowClient::new(&env, &contract_id);
+    client.initialize(&admin, &fee_collector, &0_i128);
+
+    let id1 = client.create_escrow(&seller, &resolver, &token, &100_i128, &0_u32, &3600_u64);
+    let id2 = client.create_escrow(&seller, &resolver, &token, &100_i128, &0_u32, &3600_u64);
+    let id3 = client.create_escrow(&seller, &resolver, &token, &100_i128, &0_u32, &3600_u64);
+
+    assert_eq!(id1, 1);
+    assert_eq!(id2, 2);
+    assert_eq!(id3, 3);
+}
+
+// Verify that cancellation of an escrow does not reset the counter or cause duplicates
+#[test]
+fn test_cancelled_escrow_does_not_reset_counter() {
+    let (env, admin, seller, resolver, token, fee_collector) = setup_env();
+    let contract_id = env.register(Escrow, ());
+    let client = EscrowClient::new(&env, &contract_id);
+    client.initialize(&admin, &fee_collector, &0_i128);
+
+    let id1 = client.create_escrow(&seller, &resolver, &token, &100_i128, &0_u32, &3600_u64);
+    let id2 = client.create_escrow(&seller, &resolver, &token, &100_i128, &0_u32, &3600_u64);
+    
+    // Ensure cancellation of #1 doesn't reset counter to 1 or 2
+    client.cancel_escrow(&id1);
+
+    // Create a new escrow after cancellation
+    let next_id = client.create_escrow(&seller, &resolver, &token, &100_i128, &0_u32, &3600_u64);
+    assert_eq!(next_id, 3);
+}
+
+// Verify that the IDs don't skip unexpectedly after cancellation
+#[test]
+fn test_escrow_counter_does_not_skip_after_cancellation() {
+    let (env, admin, seller, resolver, token, fee_collector) = setup_env();
+    let contract_id = env.register(Escrow, ());
+    let client = EscrowClient::new(&env, &contract_id);
+    client.initialize(&admin, &fee_collector, &0_i128);
+
+    let id1 = client.create_escrow(&seller, &resolver, &token, &100_i128, &0_u32, &3600_u64);
+    let id2 = client.create_escrow(&seller, &resolver, &token, &100_i128, &0_u32, &3600_u64);
+    
+    client.cancel_escrow(&id1);
+    
+    let id3 = client.create_escrow(&seller, &resolver, &token, &100_i128, &0_u32, &3600_u64);
+    let id4 = client.create_escrow(&seller, &resolver, &token, &100_i128, &0_u32, &3600_u64);
+
+    assert_eq!(id1, 1);
+    assert_eq!(id2, 2);
+    assert_eq!(id3, 3);
+    assert_eq!(id4, 4);
+    
+    // Verify cancelled state is correctly kept in storage
+    let cancelled_escrow = client.get_escrow(&id1);
+    assert_eq!(cancelled_escrow.state, crate::EscrowState::Canceled);
+}
+
+// Verify multiple cancellations handle the indexing properly
+#[test]
+fn test_multiple_cancellations() {
+    let (env, admin, seller, resolver, token, fee_collector) = setup_env();
+    let contract_id = env.register(Escrow, ());
+    let client = EscrowClient::new(&env, &contract_id);
+    client.initialize(&admin, &fee_collector, &0_i128);
+
+    let id1 = client.create_escrow(&seller, &resolver, &token, &100_i128, &0_u32, &3600_u64);
+    let id2 = client.create_escrow(&seller, &resolver, &token, &100_i128, &0_u32, &3600_u64);
+    let id3 = client.create_escrow(&seller, &resolver, &token, &100_i128, &0_u32, &3600_u64);
+    
+    client.cancel_escrow(&id1);
+    client.cancel_escrow(&id2);
+    
+    let next_id = client.create_escrow(&seller, &resolver, &token, &100_i128, &0_u32, &3600_u64);
+    assert_eq!(next_id, 4);
+}
