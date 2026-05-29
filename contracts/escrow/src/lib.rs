@@ -52,6 +52,11 @@ const DEFAULT_TTL_EXTENSION: u32 = 120_960;
 pub const MAX_TRACKING_ID_LEN: u32 = 64;
 pub const MAX_DESCRIPTION_LEN: u32 = 256;
 
+/// Maximum escrow amount intentionally capped to
+/// preserve arithmetic safety for fee calculations
+/// and aggregate accounting operations.
+pub const MAX_ESCROW_AMOUNT: i128 = i128::MAX / 10_000;
+
 /// Validity matrix for escrow state transitions (#9).
 ///
 /// Returns `Ok(())` if the move from `from` to `to` is legal under the
@@ -186,9 +191,11 @@ fn deduct_and_transfer(env: &Env, token_addr: &Address, recipient: &Address, amo
     Ok(())
 }
 
-fn increment_counter(env: &Env, key: &DataKey) {
+fn increment_counter(env: &Env, key: &DataKey) -> Result<(), ContractError> {
     let current: u64 = env.storage().instance().get(key).unwrap_or(0);
-    env.storage().instance().set(key, &(current + 1));
+    let next = current.checked_add(1).ok_or(ContractError::ArithmeticError)?;
+    env.storage().instance().set(key, &next);
+    Ok(())
 }
 
 #[contractimpl]
@@ -372,6 +379,9 @@ impl Escrow {
         if amount <= 0 {
             return Err(ContractError::InvalidAmount);
         }
+        if amount > MAX_ESCROW_AMOUNT {
+            return Err(ContractError::AmountExceedsMaximum);
+        }
 
         if fee_bps > MAX_FEE_BPS {
             return Err(ContractError::FeeExceedsMax);
@@ -382,9 +392,10 @@ impl Escrow {
             .instance()
             .get(&DataKey::EscrowCounter)
             .expect("counter initialized");
+        let next_id = escrow_id.checked_add(1).ok_or(ContractError::ArithmeticError)?;
         env.storage()
             .instance()
-            .set(&DataKey::EscrowCounter, &(escrow_id + 1));
+            .set(&DataKey::EscrowCounter, &next_id);
 
         let escrow = EscrowData {
             seller,
@@ -402,7 +413,7 @@ impl Escrow {
         };
 
         save_escrow(&env, escrow_id, &escrow);
-        increment_counter(&env, &DataKey::TotalCreated);
+        increment_counter(&env, &DataKey::TotalCreated)?;
         emit_escrow_created(
             &env,
             escrow_id,
@@ -552,7 +563,7 @@ impl Escrow {
         updated.state = EscrowState::Completed;
 
         save_escrow(&env, escrow_id, &updated);
-        increment_counter(&env, &DataKey::TotalCompleted);
+        increment_counter(&env, &DataKey::TotalCompleted)?;
         emit_escrow_completed(&env, escrow_id, updated.seller.clone(), updated.amount, updated.fee_bps);
         Ok(())
     }
@@ -612,7 +623,7 @@ impl Escrow {
 
         save_escrow(&env, escrow_id, &updated);
         save_dispute(&env, escrow_id, &dispute_data);
-        increment_counter(&env, &DataKey::TotalDisputed);
+        increment_counter(&env, &DataKey::TotalDisputed)?;
         emit_dispute_raised(
             &env,
             escrow_id,
@@ -654,7 +665,8 @@ impl Escrow {
 
         let total_key = DataKey::TotalArbitrationFees(escrow.token.clone());
         let current_total: i128 = env.storage().instance().get(&total_key).unwrap_or(0);
-        env.storage().instance().set(&total_key, &(current_total + arbitration_fee));
+        let next_total = current_total.checked_add(arbitration_fee).ok_or(ContractError::ArithmeticError)?;
+        env.storage().instance().set(&total_key, &next_total);
 
         let recipient = match resolution {
             ResolutionType::Release => escrow.seller.clone(),
@@ -676,8 +688,8 @@ impl Escrow {
         save_dispute(&env, escrow_id, &dispute_data);
 
         match resolution {
-            ResolutionType::Release => increment_counter(&env, &DataKey::TotalCompleted),
-            ResolutionType::Refund => increment_counter(&env, &DataKey::TotalRefunded),
+            ResolutionType::Release => increment_counter(&env, &DataKey::TotalCompleted)?,
+            ResolutionType::Refund => increment_counter(&env, &DataKey::TotalRefunded)?,
         };
 
         emit_dispute_resolved(
@@ -734,7 +746,7 @@ impl Escrow {
         updated.state = EscrowState::Completed;
 
         save_escrow(&env, escrow_id, &updated);
-        increment_counter(&env, &DataKey::TotalCompleted);
+        increment_counter(&env, &DataKey::TotalCompleted)?;
         emit_auto_released(&env, escrow_id, updated.seller.clone(), updated.amount, updated.fee_bps);
         Ok(())
     }

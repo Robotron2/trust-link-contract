@@ -35,7 +35,7 @@ fn mint_tokens(env: &Env, token: &Address, to: &Address, amount: i128) {
 }
 
 #[test]
-fn test_fee_calculation_max_i128() {
+fn test_fee_calculation_max_escrow_amount() {
     let (env, seller, buyer, resolver, _admin, token, fee_collector) = setup_env();
 
     let contract_id = env.register(Escrow, ());
@@ -43,7 +43,7 @@ fn test_fee_calculation_max_i128() {
     let admin = Address::generate(&env);
     client.initialize(&admin, &fee_collector, &0_i128);
 
-    let amount = i128::MAX;
+    let amount = MAX_ESCROW_AMOUNT;
     let fee_bps = 300; // 3%
 
     let id = client.create_escrow(&seller, &resolver, &token, &amount, &fee_bps, &3600_u64);
@@ -60,12 +60,29 @@ fn test_fee_calculation_max_i128() {
     let escrow = client.get_escrow(&id);
     assert_eq!(escrow.state, EscrowState::Completed);
 
-    let expected_fee = (i128::MAX / 10_000) * 300 + (i128::MAX % 10_000) * 300 / 10_000;
-    let expected_net = i128::MAX - expected_fee;
+    let expected_fee = (MAX_ESCROW_AMOUNT / 10_000) * 300 + (MAX_ESCROW_AMOUNT % 10_000) * 300 / 10_000;
+    let expected_net = MAX_ESCROW_AMOUNT - expected_fee;
 
     let tc = soroban_sdk::token::Client::new(&env, &token);
     assert_eq!(tc.balance(&seller), expected_net);
     assert_eq!(tc.balance(&contract_id), expected_fee);
+}
+
+#[test]
+fn test_create_escrow_amount_exceeds_maximum() {
+    let (env, seller, _buyer, resolver, _admin, token, fee_collector) = setup_env();
+
+    let contract_id = env.register(Escrow, ());
+    let client = super::EscrowClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &fee_collector, &0_i128);
+
+    let amount = MAX_ESCROW_AMOUNT + 1;
+    let res = client.try_create_escrow(&seller, &resolver, &token, &amount, &300, &3600_u64);
+    assert_eq!(res, Err(Ok(ContractError::AmountExceedsMaximum)));
+
+    let res2 = client.try_create_escrow(&seller, &resolver, &token, &i128::MAX, &300, &3600_u64);
+    assert_eq!(res2, Err(Ok(ContractError::AmountExceedsMaximum)));
 }
 
 #[test]
@@ -110,7 +127,7 @@ fn test_addition_overflow_escrow_counter() {
     });
     
     let res = client.try_create_escrow(&seller, &resolver, &token, &1000, &300, &3600);
-    assert_eq!(res, Err(Ok(ContractError::ArithmeticOverflow)));
+    assert_eq!(res, Err(Ok(ContractError::ArithmeticError)));
 }
 
 #[test]
@@ -153,7 +170,7 @@ fn test_multiplication_overflow() {
     let fee_bps = u32::MAX;
     
     let res = super::deduct_and_transfer(&env, &token, &recipient, amount, fee_bps);
-    assert_eq!(res, Err(ContractError::ArithmeticOverflow));
+    assert_eq!(res, Err(ContractError::ArithmeticError));
 }
 
 #[test]
