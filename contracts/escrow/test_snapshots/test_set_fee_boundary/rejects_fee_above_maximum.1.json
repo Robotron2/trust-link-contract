@@ -29,6 +29,8 @@
         }
       ]
     ],
+    [],
+    [],
     []
   ],
   "ledger": {
@@ -92,6 +94,18 @@
                       "key": {
                         "vec": [
                           {
+                            "symbol": "DefaultFeeBps"
+                          }
+                        ]
+                      },
+                      "val": {
+                        "u32": 300
+                      }
+                    },
+                    {
+                      "key": {
+                        "vec": [
+                          {
                             "symbol": "EscrowCounter"
                           }
                         ]
@@ -135,7 +149,7 @@
                               "symbol": "protocol_fee_bps"
                             },
                             "val": {
-                              "u32": 300
+                              "u32": 0
                             }
                           }
                         ]

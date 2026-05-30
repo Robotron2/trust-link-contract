@@ -22,8 +22,17 @@ pub use crate::types::{
     FeeConfig, ResolutionType,
 };
 
-/// Maximum protocol fee in basis points (300 = 3%).
-const MAX_FEE_BPS: u32 = 300;
+/// Maximum escrow fee in basis points (300 = 3%).
+///
+/// This applies to the per-escrow `fee_bps` value supplied at creation time,
+/// and to the legacy `set_fee` helper that persists `DefaultFeeBps`.
+const MAX_ESCROW_FEE_BPS: u32 = 300;
+
+/// Maximum configurable protocol/arbitration fee in basis points.
+///
+/// Protocol fee and arbitration fee are stored in `FeeConfig`, which the
+/// dispute-resolution and payout paths read separately from the per-escrow fee.
+const MAX_CONFIG_FEE_BPS: u32 = 10_000;
 
 /// Minimum escrow amount in stroops.
 /// Keeps the contract from accepting zero or negative escrows.
@@ -111,11 +120,34 @@ fn write_fee_config(env: &Env, fee_config: &FeeConfig) {
     env.storage().instance().set(&DataKey::FeeConfig, fee_config);
 }
 
-fn validate_fee_bps(fee_bps: u32) -> Result<(), ContractError> {
-    if fee_bps > MAX_FEE_BPS {
+fn validate_escrow_fee_bps(fee_bps: u32) -> Result<(), ContractError> {
+    if fee_bps > MAX_ESCROW_FEE_BPS {
         return Err(ContractError::FeeExceedsMax);
     }
     Ok(())
+}
+
+fn validate_config_fee_bps(fee_bps: u32) -> Result<(), ContractError> {
+    if fee_bps > MAX_CONFIG_FEE_BPS {
+        return Err(ContractError::FeeExceedsMax);
+    }
+    Ok(())
+}
+
+fn update_default_fee(env: &Env, caller: &Address, fee_bps: u32) -> Result<u32, ContractError> {
+    caller.require_auth();
+    let admin = require_admin(env);
+    if caller != &admin {
+        return Err(ContractError::NotAuthorized);
+    }
+    validate_escrow_fee_bps(fee_bps)?;
+    let old_fee: u32 = env
+        .storage()
+        .instance()
+        .get(&DataKey::DefaultFeeBps)
+        .unwrap_or(0);
+    env.storage().instance().set(&DataKey::DefaultFeeBps, &fee_bps);
+    Ok(old_fee)
 }
 
 fn update_protocol_fee(env: &Env, caller: &Address, fee_bps: u32) -> Result<u32, ContractError> {
@@ -124,7 +156,7 @@ fn update_protocol_fee(env: &Env, caller: &Address, fee_bps: u32) -> Result<u32,
     if caller != &admin {
         return Err(ContractError::NotAuthorized);
     }
-    validate_fee_bps(fee_bps)?;
+    validate_config_fee_bps(fee_bps)?;
     let mut config = read_fee_config(env);
     let old_fee = config.protocol_fee_bps;
     config.protocol_fee_bps = fee_bps;
@@ -138,7 +170,7 @@ fn update_arbitration_fee(env: &Env, caller: &Address, fee_bps: u32) -> Result<u
     if caller != &admin {
         return Err(ContractError::NotAuthorized);
     }
-    validate_fee_bps(fee_bps)?;
+    validate_config_fee_bps(fee_bps)?;
     let mut config = read_fee_config(env);
     let old_fee = config.arbitration_fee_bps;
     config.arbitration_fee_bps = fee_bps;
@@ -260,7 +292,7 @@ impl Escrow {
         if admin == fee_collector {
             return Err(ContractError::InvalidAddress);
         }
-        validate_fee_bps(arbitration_fee_bps)?;
+        validate_config_fee_bps(arbitration_fee_bps)?;
 
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::FeeCollector, &fee_collector);
@@ -331,7 +363,7 @@ impl Escrow {
 
     /// Updates the default protocol fee. Requires admin auth.
     pub fn set_fee(env: Env, caller: Address, fee_bps: u32) -> Result<(), ContractError> {
-        let old_fee_bps = update_protocol_fee(&env, &caller, fee_bps)?;
+        let old_fee_bps = update_default_fee(&env, &caller, fee_bps)?;
         emit_fee_updated(&env, old_fee_bps, fee_bps);
         Ok(())
     }
@@ -424,9 +456,7 @@ impl Escrow {
             return Err(ContractError::InvalidAmount);
         }
 
-        if fee_bps > MAX_FEE_BPS {
-            return Err(ContractError::FeeExceedsMax);
-        }
+        validate_escrow_fee_bps(fee_bps)?;
 
         let escrow_id: u64 = env
             .storage()
@@ -694,8 +724,9 @@ impl Escrow {
 
         ensure_not_paused(&env)?;
         let mut escrow = load_escrow(&env, escrow_id)?;
+        let admin = require_admin(&env);
 
-        if caller != escrow.resolver {
+        if caller != escrow.resolver && caller != admin {
             return Err(ContractError::NotAuthorized);
         }
 
@@ -788,7 +819,7 @@ impl Escrow {
         let eligible_at = escrow
             .delivered_at
             .checked_add(DELIVERY_RELEASE_WINDOW)
-            .ok_or(ContractError::ArithmeticError)?;
+            .ok_or(ContractError::ArithmeticOverflow)?;
         if env.ledger().timestamp() < eligible_at {
             return Err(ContractError::ShippingWindowNotElapsed);
         }
