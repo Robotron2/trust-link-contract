@@ -49,4 +49,6 @@ pub enum ContractError {
     SameAddress = 19,
     /// Returned when an escrow amount exceeds the maximum allowed limit.
     AmountExceedsMaximum = 20,
+    /// Returned when a tracking ID is empty or otherwise invalid for shipment.
+    InvalidTrackingId = 21,
 }

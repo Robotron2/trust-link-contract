@@ -25,7 +25,7 @@ fn test_get_contract_config() {
     assert_eq!(config.escrow_count, 0);
 
     // Update fee and check again
-    client.set_protocol_fee(&150);
+    client.set_protocol_fee(&admin, &150);
     config = client.get_contract_config();
     assert_eq!(config.fee_bps, 150);
     

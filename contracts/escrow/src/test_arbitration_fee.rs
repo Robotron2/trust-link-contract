@@ -2,8 +2,8 @@
 
 use crate::{DisputeResolved, Escrow, EscrowClient, ResolutionType};
 use soroban_sdk::{
-    testutils::{Address as _, Ledger},
-    token, Address, Env, IntoVal, String as SorobanString, Symbol, TryFromVal, vec,
+    testutils::{Address as _, Events as _, Ledger},
+    token, Address, Env, IntoVal, String as SorobanString, Symbol, TryFromVal, Val,
 };
 
 fn setup(env: &Env) -> (Address, Address, Address, Address, Address, Address) {
@@ -43,11 +43,13 @@ fn test_arbitration_fee_deduction_on_resolve_release() {
 
     mint(&env, &token, &buyer, amount);
     client.fund_escrow(&id, &buyer);
+    client.mark_shipped(&seller, &id, &SorobanString::from_str(&env, "TRACK-ARB-1"));
 
     // Advance time to allow dispute
     env.ledger().set_timestamp(env.ledger().timestamp() + 10);
 
     client.raise_dispute(
+        &buyer,
         &id,
         &Symbol::new(&env, "reason"),
         &SorobanString::from_str(&env, "desc"),
@@ -58,7 +60,7 @@ fn test_arbitration_fee_deduction_on_resolve_release() {
     assert_eq!(client.get_total_arbitration_fees(&token), 0);
     assert_eq!(client.get_arbitration_fee(), arb_fee_bps);
 
-    client.resolve_dispute(&id, &ResolutionType::Release);
+    client.resolve_dispute(&resolver, &id, &ResolutionType::Release);
 
     // Calculation:
     // 1. amount = 1000
@@ -96,26 +98,48 @@ fn test_arbitration_fee_deduction_on_resolve_refund() {
 
     mint(&env, &token, &buyer, amount);
     client.fund_escrow(&id, &buyer);
+    client.mark_shipped(&seller, &id, &SorobanString::from_str(&env, "TRACK-ARB-2"));
 
     env.ledger().set_timestamp(env.ledger().timestamp() + 10);
     client.raise_dispute(
+        &buyer,
         &id,
         &Symbol::new(&env, "reason"),
         &SorobanString::from_str(&env, "desc"),
         &soroban_sdk::BytesN::from_array(&env, &[0u8; 32]),
     );
 
-    client.resolve_dispute(&id, &ResolutionType::Refund);
+    client.resolve_dispute(&resolver, &id, &ResolutionType::Refund);
 
-    let expected_topic = vec![&env, Symbol::new(&env, "dispute_resolved").into_val(&env)];
-    let events = env.events().all();
-    let saw_refund_event = events.into_iter().any(|(event_contract, topics, data)| {
-        event_contract == contract_id
-            && topics == expected_topic
-            && DisputeResolved::try_from_val(&env, &data)
-                .map(|event| event.escrow_id == id && event.resolution == ResolutionType::Refund)
-                .unwrap_or(false)
-    });
+    let expected_topic = Symbol::new(&env, "dispute_resolved");
+    let saw_refund_event = env
+        .events()
+        .all()
+        .filter_by_contract(&contract_id)
+        .events()
+        .iter()
+        .any(|event| match &event.body {
+            soroban_sdk::xdr::ContractEventBody::V0(v0) => {
+                let Some(topic) = v0.topics.iter().next() else {
+                    return false;
+                };
+                let Ok(topic) = Symbol::try_from_val(&env, topic) else {
+                    return false;
+                };
+                if topic != expected_topic {
+                    return false;
+                }
+
+                let Ok(data) = Val::try_from_val(&env, &v0.data) else {
+                    return false;
+                };
+
+                DisputeResolved::try_from_val(&env, &data)
+                    .map(|event| event.escrow_id == id && event.resolution == ResolutionType::Refund)
+                    .unwrap_or(false)
+            }
+            _ => false,
+        });
     assert!(saw_refund_event, "dispute_resolved refund event should be emitted");
 
     // Calculation:
@@ -141,6 +165,6 @@ fn test_set_and_get_arbitration_fee() {
     client.initialize(&admin, &fee_collector, &50_u32);
     assert_eq!(client.get_arbitration_fee(), 50);
 
-    client.set_arbitration_fee(&150_u32);
+    client.set_arbitration_fee(&admin, &150_u32);
     assert_eq!(client.get_arbitration_fee(), 150);
 }

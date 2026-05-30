@@ -45,13 +45,19 @@ fn test_withdraw_fees_after_multiple_escrows() {
 
     mint_tokens(&env, &token, &buyer, 3000);
 
-    // Complete 3 escrows that each accrue 1% fees
+    // Complete 3 escrows that each accrue 1% fees via dispute release.
     for _ in 0..3 {
         let id = client.create_escrow(&seller, &resolver, &token, &1000_i128, &100_u32, &3600_u64);
         client.fund_escrow(&id, &buyer);
-        env.ledger()
-            .set_timestamp(env.ledger().timestamp() + 172801);
-        client.confirm_delivery(&id);
+        client.mark_shipped(&seller, &id, &soroban_sdk::String::from_str(&env, "TRACK-WITHDRAW-1"));
+        client.raise_dispute(
+            &buyer,
+            &id,
+            &soroban_sdk::Symbol::new(&env, "release"),
+            &soroban_sdk::String::from_str(&env, "ok"),
+            &soroban_sdk::BytesN::from_array(&env, &[0u8; 32]),
+        );
+        client.resolve_dispute(&resolver, &id, &crate::ResolutionType::Release);
     }
 
     // Total fees: 10 * 3 = 30
@@ -60,11 +66,11 @@ fn test_withdraw_fees_after_multiple_escrows() {
 
     // Admin calls withdraw_fees for full amount
     let to = Address::generate(&env);
-    client.withdraw_fees(&token, &to, &30);
+    client.withdraw_fees(&admin, &token, &to, &30);
 
     assert_eq!(token::Client::new(&env, &token).balance(&to), 30);
     // Second withdraw for same amount fails with InsufficientBalance
-    let result2 = client.try_withdraw_fees(&token, &to, &30);
+    let result2 = client.try_withdraw_fees(&admin, &token, &to, &30);
     assert!(matches!(
         result2,
         Err(Ok(ContractError::InsufficientBalance))
@@ -87,15 +93,29 @@ fn test_withdraw_fees_multiple_tokens() {
     mint_tokens(&env, &token_a, &buyer, 1000);
     let id_a = client.create_escrow(&seller, &resolver, &token_a, &1000_i128, &100_u32, &3600_u64);
     client.fund_escrow(&id_a, &buyer);
-    env.ledger().set_timestamp(env.ledger().timestamp() + 172801);
-    client.confirm_delivery(&id_a);
+    client.mark_shipped(&seller, &id_a, &soroban_sdk::String::from_str(&env, "TRACK-WITHDRAW-A"));
+    client.raise_dispute(
+        &buyer,
+        &id_a,
+        &soroban_sdk::Symbol::new(&env, "release"),
+        &soroban_sdk::String::from_str(&env, "ok"),
+        &soroban_sdk::BytesN::from_array(&env, &[0u8; 32]),
+    );
+    client.resolve_dispute(&resolver, &id_a, &crate::ResolutionType::Release);
 
     // Accrue fees for Token B (2000 amount, 2% fee = 40)
     mint_tokens(&env, &token_b, &buyer, 2000);
     let id_b = client.create_escrow(&seller, &resolver, &token_b, &2000_i128, &200_u32, &3600_u64);
     client.fund_escrow(&id_b, &buyer);
-    env.ledger().set_timestamp(env.ledger().timestamp() + 172801);
-    client.confirm_delivery(&id_b);
+    client.mark_shipped(&seller, &id_b, &soroban_sdk::String::from_str(&env, "TRACK-WITHDRAW-B"));
+    client.raise_dispute(
+        &buyer,
+        &id_b,
+        &soroban_sdk::Symbol::new(&env, "release"),
+        &soroban_sdk::String::from_str(&env, "ok"),
+        &soroban_sdk::BytesN::from_array(&env, &[0u8; 32]),
+    );
+    client.resolve_dispute(&resolver, &id_b, &crate::ResolutionType::Release);
 
     // Verify contract balances
     assert_eq!(token::Client::new(&env, &token_a).balance(&contract_id), 10);
@@ -104,14 +124,14 @@ fn test_withdraw_fees_multiple_tokens() {
     let to = Address::generate(&env);
 
     // Withdraw Token A
-    client.withdraw_fees(&token_a, &to, &10);
+    client.withdraw_fees(&admin, &token_a, &to, &10);
     assert_eq!(token::Client::new(&env, &token_a).balance(&to), 10);
     assert_eq!(token::Client::new(&env, &token_a).balance(&contract_id), 0);
     // Token B balance should remain unchanged
     assert_eq!(token::Client::new(&env, &token_b).balance(&contract_id), 40);
 
     // Withdraw Token B
-    client.withdraw_fees(&token_b, &to, &40);
+    client.withdraw_fees(&admin, &token_b, &to, &40);
     assert_eq!(token::Client::new(&env, &token_b).balance(&to), 40);
     assert_eq!(token::Client::new(&env, &token_b).balance(&contract_id), 0);
 }

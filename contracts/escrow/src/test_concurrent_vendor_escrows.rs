@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use crate::{Escrow, EscrowClient, EscrowState};
-use soroban_sdk::{testutils::Address as _, Address, Env};
+use soroban_sdk::{testutils::{Address as _, Ledger as _}, Address, Env};
 
 fn setup_env() -> (Env, Address, Address, Address, Address, Address) {
     let env = Env::default();
@@ -25,19 +25,19 @@ fn same_vendor_can_create_multiple_escrows_without_collision() {
     client.initialize(&admin, &fee_collector, &0_u32);
 
     // Test 1: Same Vendor Creates Multiple Escrows Sequentially
-    let mut ids = std::vec::Vec::new();
-    let num_escrows = 10;
+    let num_escrows = 10_usize;
+    let mut ids = [0_u64; 10];
     
     // We do not advance the ledger sequence here to simulate "concurrent" creation
     // within the same block.
-    for i in 1..=num_escrows {
+    for i in 0..num_escrows {
         // Vary the amount slightly for each escrow to ensure isolated data
-        let amount = 100_i128 + (i as i128); 
+        let amount = 100_i128 + ((i + 1) as i128);
         let id = client.create_escrow(&seller, &resolver, &token, &amount, &0_u32, &3600_u64);
         
         // IDs should be strictly monotonic
-        assert_eq!(id, i as u64);
-        ids.push(id);
+        assert_eq!(id, (i + 1) as u64);
+        ids[i] = id;
     }
 
     // Ensure IDs do not skip and are unique
@@ -76,7 +76,7 @@ fn escrow_storage_entries_remain_isolated() {
     let id3 = client.create_escrow(&seller, &resolver, &token, &300_i128, &0_u32, &3600_u64);
 
     // Mutate one escrow
-    client.cancel_escrow(&id2);
+    client.cancel_escrow(&seller, &id2);
 
     // Verify all others remain unchanged
     let escrow1 = client.get_escrow(&id1);

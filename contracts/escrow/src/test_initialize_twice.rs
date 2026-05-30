@@ -50,7 +50,7 @@ fn storage_from_the_first_initialize_is_unchanged_after_a_failed_second_call() {
     let stored_collector: Address = env
         .as_contract(&client.address, || env.storage().instance().get(&DataKey::FeeCollector))
         .expect("fee collector set");
-    let stored_fee = env
+    let stored_fee: crate::FeeConfig = env
         .as_contract(&client.address, || env.storage().instance().get(&DataKey::FeeConfig))
         .expect("fee config set");
 

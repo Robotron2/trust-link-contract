@@ -1,16 +1,16 @@
 #![cfg(test)]
 
 use crate::{test_helpers::setup_contract, ContractError, DataKey, FeeConfig, ProtocolFeeUpdated};
-use soroban_sdk::{testutils::Address as _, vec, Address, Env, IntoVal, Symbol, TryFromVal, Val};
+use soroban_sdk::{testutils::{Address as _, Events as _}, Address, Env, IntoVal, Symbol, TryFromVal, Val};
 
 /// Test: set_protocol_fee with 0 bps (minimum)
 #[test]
 fn test_set_fee_zero_bps() {
     let env = Env::default();
     env.mock_all_auths();
-    let (_contract_id, client, _admin, _fee_collector) = setup_contract(&env);
+    let (_contract_id, client, admin, _fee_collector) = setup_contract(&env);
 
-    let result = client.try_set_protocol_fee(&0_u32);
+    let result = client.try_set_protocol_fee(&admin, &0_u32);
     assert!(result.is_ok(), "set_protocol_fee(0) should succeed");
 
     // Verify stored in FeeConfig
@@ -31,9 +31,9 @@ fn test_set_fee_zero_bps() {
 fn test_set_fee_100_bps() {
     let env = Env::default();
     env.mock_all_auths();
-    let (_contract_id, client, _admin, _fee_collector) = setup_contract(&env);
+    let (_contract_id, client, admin, _fee_collector) = setup_contract(&env);
 
-    let result = client.try_set_protocol_fee(&100_u32);
+    let result = client.try_set_protocol_fee(&admin, &100_u32);
     assert!(result.is_ok(), "set_protocol_fee(100) should succeed");
 
     let stored = env.as_contract(&client.address, || {
@@ -53,9 +53,9 @@ fn test_set_fee_100_bps() {
 fn test_set_fee_max_10000_bps() {
     let env = Env::default();
     env.mock_all_auths();
-    let (_contract_id, client, _admin, _fee_collector) = setup_contract(&env);
+    let (_contract_id, client, admin, _fee_collector) = setup_contract(&env);
 
-    let result = client.try_set_protocol_fee(&10_000_u32);
+    let result = client.try_set_protocol_fee(&admin, &10_000_u32);
     assert!(result.is_ok(), "set_protocol_fee(10_000) should succeed");
 
     let stored = env.as_contract(&client.address, || {
@@ -75,9 +75,9 @@ fn test_set_fee_max_10000_bps() {
 fn test_set_fee_rejects_10001_bps() {
     let env = Env::default();
     env.mock_all_auths();
-    let (_contract_id, client, _admin, _fee_collector) = setup_contract(&env);
+    let (_contract_id, client, admin, _fee_collector) = setup_contract(&env);
 
-    let result = client.try_set_protocol_fee(&10_001_u32);
+    let result = client.try_set_protocol_fee(&admin, &10_001_u32);
     assert!(matches!(result, Err(Ok(ContractError::FeeExceedsMax))));
 }
 
@@ -93,7 +93,7 @@ fn test_set_fee_requires_admin_auth() {
 
     // Strip all auths — set_fee should fail
     env.mock_auths(&[]);
-    let result = client.try_set_protocol_fee(&100_u32);
+    let result = client.try_set_protocol_fee(&admin, &100_u32);
     assert!(result.is_err(), "set_protocol_fee requires admin auth");
 }
 
@@ -102,25 +102,45 @@ fn test_set_fee_requires_admin_auth() {
 fn test_set_fee_emits_event() {
     let env = Env::default();
     env.mock_all_auths();
-    let (_contract_id, client, _admin, _fee_collector) = setup_contract(&env);
+    let (_contract_id, client, admin, _fee_collector) = setup_contract(&env);
 
     // First call: 0 -> 100
-    let result1 = client.try_set_protocol_fee(&100_u32);
+    let result1 = client.try_set_protocol_fee(&admin, &100_u32);
     assert!(result1.is_ok(), "first set_protocol_fee succeeds");
 
     // Second call: 100 -> 250
-    let result2 = client.try_set_protocol_fee(&250_u32);
+    let result2 = client.try_set_protocol_fee(&admin, &250_u32);
     assert!(result2.is_ok(), "second set_protocol_fee succeeds");
 
-    let expected_topic = vec![&env, Symbol::new(&env, "protocol_fee_updated").into_val(&env)];
-    let events = env.events().all();
-    let saw_fee_updated = events.into_iter().any(|(event_contract, topics, data)| {
-        event_contract == client.address
-            && topics == expected_topic
-            && ProtocolFeeUpdated::try_from_val(&env, &data)
-                .map(|event| event.old_fee_bps == 100 && event.new_fee_bps == 250)
-                .unwrap_or(false)
-    });
+    let expected_topic = Symbol::new(&env, "protocol_fee_updated");
+    let saw_fee_updated = env
+        .events()
+        .all()
+        .filter_by_contract(&client.address)
+        .events()
+        .iter()
+        .any(|event| match &event.body {
+            soroban_sdk::xdr::ContractEventBody::V0(v0) => {
+                let Some(topic) = v0.topics.iter().next() else {
+                    return false;
+                };
+                let Ok(topic) = Symbol::try_from_val(&env, topic) else {
+                    return false;
+                };
+                if topic != expected_topic {
+                    return false;
+                }
+
+                let Ok(data) = Val::try_from_val(&env, &v0.data) else {
+                    return false;
+                };
+
+                ProtocolFeeUpdated::try_from_val(&env, &data)
+                    .map(|event| event.old_fee_bps == 100 && event.new_fee_bps == 250)
+                    .unwrap_or(false)
+            }
+            _ => false,
+        });
     assert!(saw_fee_updated, "protocol_fee_updated event should be emitted for the latest update");
 
     // Verify final value
@@ -211,7 +231,7 @@ fn test_set_fee_not_retroactive() {
     assert_eq!(escrow.fee_bps, 50, "escrow created with 50 bps retains that value");
 
     // Now admin changes the default fee to 200 bps
-    let result = client.try_set_protocol_fee(&200_u32);
+    let result = client.try_set_protocol_fee(&admin, &200_u32);
     assert!(result.is_ok(), "set_protocol_fee(200) succeeds");
 
     // Verify the existing escrow still has fee_bps = 50 (not retroactively updated)
@@ -244,7 +264,7 @@ fn test_set_fee_unauthorized_caller_rejected() {
     // Mock only unauthorized auth — set_fee should fail
     env.mock_auths(&[]);
 
-    let result = client.try_set_protocol_fee(&100_u32);
+    let result = client.try_set_protocol_fee(&admin, &100_u32);
     assert!(
         result.is_err(),
         "set_fee should reject a caller that is not the admin"

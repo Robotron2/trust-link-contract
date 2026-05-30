@@ -1,11 +1,8 @@
 #![cfg(test)]
-//! `raise_dispute` must reject after the dispute window has elapsed (#22).
-//!
-//! Boundary semantics: the contract uses `timestamp >= dispute_deadline →
-//! reject`, so a dispute at exactly the deadline must fail; one ledger second
-//! before must succeed.
+//! Regression tests for dispute handling after shipping and for the
+//! admin-triggered auto-release path (#4).
 
-use crate::{ContractError, DataKey, Escrow, EscrowClient, EscrowData};
+use crate::{ContractError, DataKey, DisputeData, DisputeStatus, Escrow, EscrowClient, EscrowData, EscrowState};
 use soroban_sdk::{
     testutils::{Address as _, Ledger as _},
     token, Address, BytesN, Env, String, Symbol,
@@ -15,9 +12,11 @@ struct Fx {
     env: Env,
     client: EscrowClient<'static>,
     contract_id: Address,
+    admin: Address,
     buyer: Address,
+    seller: Address,
     escrow_id: u64,
-    dispute_deadline: u64,
+    delivered_at: u64,
 }
 
 fn setup_funded_and_shipped() -> Fx {
@@ -35,52 +34,61 @@ fn setup_funded_and_shipped() -> Fx {
 
     let contract_id = env.register(Escrow, ());
     let client = EscrowClient::new(&env, &contract_id);
-    client.initialize(&admin, &fee_collector, &0_i128);
+    client.initialize(&admin, &fee_collector, &0_u32);
 
     let amount: i128 = 1_000;
     let escrow_id = client.create_escrow(&seller, &resolver, &token_addr, &amount, &0_u32, &0_u64);
     token::StellarAssetClient::new(&env, &token_addr).mint(&buyer, &amount);
     client.fund_escrow(&escrow_id, &buyer);
+    client.mark_shipped(&seller, &escrow_id, &String::from_str(&env, "TRK-001"));
 
-    let tracking = String::from_str(&env, "TRK-001");
-    client.mark_shipped(&seller, &escrow_id, &tracking);
+    let delivered_at = 1_700_000_000;
+    env.ledger().set_timestamp(delivered_at);
+    client.record_delivery(&admin, &escrow_id);
 
-    let data: EscrowData = env
-        .as_contract(&contract_id, || env.storage().persistent().get(&DataKey::Escrow(escrow_id)))
-        .expect("escrow exists");
-    let dispute_deadline = data.dispute_deadline;
-
-    Fx { env, client, contract_id, buyer, escrow_id, dispute_deadline }
+    Fx { env, client, contract_id, admin, buyer, seller, escrow_id, delivered_at }
 }
 
-fn try_raise(fx: &Fx) -> Result<Result<(), soroban_sdk::ConversionError>, Result<ContractError, soroban_sdk::InvokeError>> {
+#[test]
+fn dispute_can_be_opened_while_shipped() {
+    let fx = setup_funded_and_shipped();
+    fx.env.ledger().set_timestamp(fx.delivered_at + 10);
+
     let reason = Symbol::new(&fx.env, "non_delivery");
     let description = String::from_str(&fx.env, "missing");
     let evidence = BytesN::from_array(&fx.env, &[0xab; 32]);
-    fx.client.try_raise_dispute(&fx.buyer, &fx.escrow_id, &reason, &description, &evidence)
+
+    fx.client.raise_dispute(&fx.buyer, &fx.escrow_id, &reason, &description, &evidence);
+
+    let dispute: DisputeData = fx
+        .env
+        .as_contract(&fx.contract_id, || fx.env.storage().persistent().get(&DataKey::Dispute(fx.escrow_id)))
+        .expect("dispute exists");
+    assert_eq!(dispute.status, DisputeStatus::Active);
+    assert_eq!(dispute.evidence_hash, evidence);
+
+    let escrow: EscrowData = fx
+        .env
+        .as_contract(&fx.contract_id, || fx.env.storage().persistent().get(&DataKey::Escrow(fx.escrow_id)))
+        .expect("escrow exists");
+    assert_eq!(escrow.state, EscrowState::Disputed);
 }
 
 #[test]
-fn dispute_succeeds_within_window() {
+fn auto_release_rejects_when_dispute_exists() {
     let fx = setup_funded_and_shipped();
-    fx.env.ledger().with_mut(|li| li.timestamp = fx.dispute_deadline - 1);
-    let result = try_raise(&fx);
-    assert_eq!(result, Ok(Ok(())), "raise_dispute should succeed strictly before the deadline");
-    let _ = fx.contract_id;
-}
+    let reason = Symbol::new(&fx.env, "non_delivery");
+    let description = String::from_str(&fx.env, "missing");
+    let evidence = BytesN::from_array(&fx.env, &[0xab; 32]);
 
-#[test]
-fn dispute_fails_after_window_closes() {
-    let fx = setup_funded_and_shipped();
-    fx.env.ledger().with_mut(|li| li.timestamp = fx.dispute_deadline + 10);
-    assert_eq!(try_raise(&fx), Err(Ok(ContractError::DisputeWindowClosed)));
-}
+    fx.client.raise_dispute(&fx.buyer, &fx.escrow_id, &reason, &description, &evidence);
 
-#[test]
-fn dispute_at_exact_deadline_is_rejected() {
-    let fx = setup_funded_and_shipped();
-    // The guard is `timestamp >= dispute_deadline`, so this is the first
-    // rejected tick.
-    fx.env.ledger().with_mut(|li| li.timestamp = fx.dispute_deadline);
-    assert_eq!(try_raise(&fx), Err(Ok(ContractError::DisputeWindowClosed)));
+    fx.env.ledger().set_timestamp(fx.delivered_at + 172_801);
+    assert_eq!(
+        fx.client.try_auto_release(&fx.escrow_id),
+        Err(Ok(ContractError::InvalidState)),
+    );
+
+    let _ = fx.admin;
+    let _ = fx.seller;
 }

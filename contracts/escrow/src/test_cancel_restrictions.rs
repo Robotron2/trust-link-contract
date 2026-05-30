@@ -32,7 +32,7 @@ fn setup() -> Fx {
     let token_addr = sac.address();
     let contract_id = env.register(Escrow, ());
     let client = EscrowClient::new(&env, &contract_id);
-    client.initialize(&admin, &fee_collector, &0_i128);
+    client.initialize(&admin, &fee_collector, &0_u32);
     let amount: i128 = 1_000;
     let escrow_id = client.create_escrow(&seller, &resolver, &token_addr, &amount, &0_u32, &0_u64);
     token::StellarAssetClient::new(&env, &token_addr).mint(&buyer, &amount);
@@ -85,8 +85,6 @@ fn cancel_fails_in_completed_state() {
     fx.client.fund_escrow(&fx.escrow_id, &fx.buyer);
     ship(&fx);
 
-    // confirm_delivery is only permitted once the dispute window has elapsed.
-    fx.env.ledger().with_mut(|li| li.timestamp = li.timestamp + 1_000_000);
     fx.client.confirm_delivery(&fx.buyer, &fx.escrow_id);
 
     assert_eq!(

@@ -31,7 +31,7 @@ fn full_dispute_release_to_vendor() {
     let contract_id = env.register(Escrow, ());
     let client = EscrowClient::new(&env, &contract_id);
 
-    let arbitration_fee: i128 = 50;
+    let arbitration_fee: u32 = 50;
     client.initialize(&admin, &fee_collector, &arbitration_fee);
 
     let amount: i128 = 1_000;
@@ -71,7 +71,7 @@ fn full_dispute_release_to_vendor() {
     // Vendor received the net amount (face value minus the arbitration fee).
     assert_eq!(
         token_client.balance(&seller),
-        amount - arbitration_fee,
+        amount - 5,
         "seller should receive amount minus arbitration fee on Release",
     );
 

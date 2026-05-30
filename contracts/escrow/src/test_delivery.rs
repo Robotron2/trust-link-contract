@@ -3,7 +3,7 @@
 use crate::test_helpers::{advance_time, create_funded_escrow, setup_contract};
 use crate::{ContractError, DeliveryRecorded, EscrowState};
 use soroban_sdk::{
-    testutils::Address as _, vec, Address, Env, IntoVal, String as SorobanString, Symbol,
+    testutils::{Address as _, Events as _}, Address, Env, IntoVal, String as SorobanString, Symbol,
     TryFromVal, Val,
 };
 
@@ -17,12 +17,35 @@ where
     T: TryFromVal<Env, Val>,
     F: Fn(&T) -> bool,
 {
-    let expected_topic = vec![&env, Symbol::new(env, topic).into_val(env)];
-    env.events().all().into_iter().any(|(event_contract, topics, data)| {
-        event_contract == *contract_id
-            && topics == expected_topic
-            && T::try_from_val(env, &data).map(|event| predicate(&event)).unwrap_or(false)
-    })
+    let expected_topic = Symbol::new(env, topic);
+    env.events()
+        .all()
+        .filter_by_contract(contract_id)
+        .events()
+        .iter()
+        .any(|event| match &event.body {
+            soroban_sdk::xdr::ContractEventBody::V0(v0) => {
+                let Some(topic) = v0.topics.iter().next() else {
+                    return false;
+                };
+
+                let Ok(topic) = Symbol::try_from_val(env, topic) else {
+                    return false;
+                };
+                if topic != expected_topic {
+                    return false;
+                }
+
+                let Ok(data) = Val::try_from_val(env, &v0.data) else {
+                    return false;
+                };
+
+                T::try_from_val(env, &data)
+                    .map(|event| predicate(&event))
+                    .unwrap_or(false)
+            }
+            _ => false,
+        })
 }
 
 #[test]
@@ -41,14 +64,19 @@ fn test_mark_shipped_transitions_state() {
         &env, &client, &seller, &buyer, &resolver, &token, 1000, 100, 3600,
     );
 
+    let expected_ts = env.ledger().timestamp();
     client.mark_shipped(&seller, &id, &SorobanString::from_str(&env, "TRACK-001"));
 
     assert!(has_event::<crate::EscrowShipped, _>(&env, &contract_id, "escrow_shipped", |event| {
-        event.escrow_id == id && event.seller == seller
+        event.escrow_id == id
+            && event.seller == seller
+            && event.tracking_id == SorobanString::from_str(&env, "TRACK-001")
+            && event.shipped_at == expected_ts
     }));
 
     let escrow = client.get_escrow(&id);
     assert_eq!(escrow.state, EscrowState::Shipped);
+    assert_eq!(escrow.shipped_at, expected_ts);
     assert_eq!(escrow.tracking_id, Some(SorobanString::from_str(&env, "TRACK-001")));
 }
 
@@ -142,7 +170,6 @@ fn test_confirm_delivery_after_mark_shipped() {
     );
 
     client.mark_shipped(&seller, &id, &SorobanString::from_str(&env, "TRACK-003"));
-    advance_time(&env, 172801);
     client.confirm_delivery(&buyer, &id);
 
     assert!(has_event::<crate::EscrowCompleted, _>(&env, &contract_id, "escrow_completed", |event| {

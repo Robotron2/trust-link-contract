@@ -1,24 +1,22 @@
 #![cfg(test)]
 
 use crate::{Escrow, EscrowClient};
-use soroban_sdk::{testutils::Address as _, Address, Env, String, Symbol, BytesN};
+use soroban_sdk::{testutils::Address as _, Address, Env, String};
 
 #[test]
 #[should_panic(expected = "HostError: Error(Auth, InvalidAction)")]
 fn test_mark_shipped_auth_fails_immediately() {
     let env = Env::default();
-    env.mock_all_auths();
-    
+
     let contract_id = env.register_contract(None, Escrow);
     let client = EscrowClient::new(&env, &contract_id);
-    
-    // We do NOT mock auth for the unauthorized_caller, so it should panic immediately.
-    // The state isn't even initialized and there are no escrows, but it shouldn't matter!
-    // require_auth will fail before load_escrow is even called.
-    
-    // Note: To test failure we must disable the mock auth for the caller.
-    // However, `mock_all_auths` mocks all. Let's just create a caller without mocked auth.
-    // Actually, `env.mock_all_auths()` allows everything. If we don't mock auth, it rejects.
+
+    let unauthorized_caller = Address::generate(&env);
+    client.mark_shipped(
+        &unauthorized_caller,
+        &1,
+        &String::from_str(&env, "TRACK-FAIL"),
+    );
 }
 
 #[test]

@@ -287,7 +287,7 @@ fn test_fee_calculation_300_bps_exact_percentage() {
 #[test]
 fn test_fee_calculation_no_rounding_loss_various_amounts() {
     // Test various amounts to ensure no rounding loss
-    let test_cases = vec![
+    let test_cases = [
         (1_i128, 0_u32),
         (1_i128, 50_u32),
         (1_i128, 100_u32),
@@ -354,7 +354,7 @@ fn test_fee_calculation_no_rounding_loss_various_amounts() {
 #[test]
 fn test_fee_calculation_edge_case_amounts() {
     // Test edge cases with amounts that might cause rounding issues
-    let edge_cases = vec![
+    let edge_cases = [
         (9_999_i128, 300_u32),      // Just under 10,000
         (10_000_i128, 300_u32),     // Exactly 10,000
         (10_001_i128, 300_u32),     // Just over 10,000

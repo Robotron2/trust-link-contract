@@ -45,8 +45,12 @@ export class EscrowClient {
     return this.transport.invoke("fund_escrow", [escrowId, buyer]);
   }
 
-  confirm_delivery(escrowId: bigint): void | Promise<void> {
-    return this.transport.invoke("confirm_delivery", [escrowId]);
+  mark_shipped(caller: AddressLike, escrowId: bigint, trackingId: string): void | Promise<void> {
+    return this.transport.invoke("mark_shipped", [caller, escrowId, trackingId]);
+  }
+
+  confirm_delivery(caller: AddressLike, escrowId: bigint): void | Promise<void> {
+    return this.transport.invoke("confirm_delivery", [caller, escrowId]);
   }
 
   raise_dispute(

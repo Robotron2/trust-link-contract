@@ -19,7 +19,7 @@ fn fresh_contract(env: &Env) -> (EscrowClient<'static>, Address) {
     let fee_collector = Address::generate(env);
     let contract_id = env.register(Escrow, ());
     let client = EscrowClient::new(env, &contract_id);
-    client.initialize(&admin, &fee_collector, &0_i128);
+    client.initialize(&admin, &fee_collector, &0_u32);
     (client, admin)
 }
 
@@ -87,7 +87,7 @@ fn set_arbitration_fee_rejects_unauthorized_caller() {
     let (client, _admin) = fresh_contract(&env);
     let intruder = Address::generate(&env);
     assert_eq!(
-        client.try_set_arbitration_fee(&intruder, &10_i128),
+        client.try_set_arbitration_fee(&intruder, &10_u32),
         Err(Ok(ContractError::NotAuthorized)),
     );
 }

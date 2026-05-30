@@ -282,7 +282,7 @@ pub struct DisputeRaised {
     pub reason: Symbol,
     pub description: String,
     pub evidence_hash: BytesN<32>,
-    pub raised_at: u64,
+    pub disputed_at: u64,
 }
 
 /// Topic: `(\"dispute_raised\",)`, data: `DisputeRaised`.
@@ -302,7 +302,7 @@ pub fn emit_dispute_raised(
             reason,
             description,
             evidence_hash,
-            raised_at: env.ledger().timestamp(),
+            disputed_at: env.ledger().timestamp(),
         },
     );
 }
