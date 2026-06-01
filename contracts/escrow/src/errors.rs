@@ -47,4 +47,8 @@ pub enum ContractError {
     /// Returned when an update is a no-op because the new value equals the
     /// current one (e.g. rotating admin to the same address).
     SameAddress = 19,
+    /// Returned when an escrow amount exceeds the maximum allowed limit.
+    AmountExceedsMaximum = 20,
+    /// Returned when a tracking ID is empty or otherwise invalid for shipment.
+    InvalidTrackingId = 21,
 }

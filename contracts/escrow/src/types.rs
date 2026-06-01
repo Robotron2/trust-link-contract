@@ -17,6 +17,7 @@ pub enum DataKey {
     TotalCompleted,
     TotalDisputed,
     TotalRefunded,
+    FeeConfig,
 }
 
 #[contracttype]
@@ -34,7 +35,7 @@ pub struct DisputeData {
     pub description: String,
     pub evidence_hash: BytesN<32>,
     pub status: DisputeStatus,
-    pub raised_at: u64,
+    pub disputed_at: u64,
     pub tracking_id: Option<String>,
 }
 
@@ -67,6 +68,8 @@ pub enum ContractError {
     ArithmeticOverflow = 15,
     InvalidStateTransition = 16,
     InputTooLong = 17,
+    InvalidAddress = 18,
+    InvalidTrackingId = 18,
 }
 
 /// Lifecycle states of an escrow transaction.
@@ -110,6 +113,8 @@ pub struct EscrowData {
     pub funded_at: u64,
     pub dispute_deadline: u64,
     pub state: EscrowState,
+    /// Ledger timestamp recorded when the seller marked the order as shipped.
+    pub shipped_at: u64,
     /// Ledger timestamp recorded by the admin oracle when delivery is confirmed. Zero until set.
     pub delivered_at: u64,
     pub tracking_id: Option<String>,
@@ -132,14 +137,12 @@ pub struct AdminRotated {
     pub timestamp: u64,
 }
 
-/// Protocol fee configuration.
+/// Protocol and arbitration fee configuration in basis points.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FeeConfig {
-    /// Address that receives protocol fees.
-    pub collector: Address,
-    /// Maximum allowed fee in basis points.
-    pub max_fee_bps: u32,
+    pub protocol_fee_bps: u32,
+    pub arbitration_fee_bps: u32,
 }
 
 #[contracttype]
