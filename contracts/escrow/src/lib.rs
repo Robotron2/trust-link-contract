@@ -19,7 +19,7 @@ pub use crate::events::{
 };
 pub use crate::types::{
     ContractConfig, ContractStats, DataKey, DisputeData, DisputeStatus, EscrowData, EscrowState,
-    FeeConfig, ResolutionType,
+    FeeConfig, PublicContractConfig, ResolutionType,
 };
 
 /// Maximum escrow fee in basis points (300 = 3%).
@@ -255,6 +255,7 @@ fn deduct_and_transfer(env: &Env, token_addr: &Address, recipient: &Address, amo
     Ok(())
 }
 
+fn increment_counter(env: &Env, key: &DataKey) {
 fn transfer_with_protocol_fee(
     env: &Env,
     token_addr: &Address,
@@ -366,6 +367,13 @@ impl Escrow {
     /// Returns whether the contract is currently paused.
     pub fn is_paused(env: Env) -> bool {
         env.storage().instance().get(&DataKey::Paused).unwrap_or(false)
+    }
+
+    pub fn is_paused(env: Env) -> bool {
+        env.storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false)
     }
 
     /// Rotates the admin to a new address. Requires auth from the current admin.
@@ -937,6 +945,44 @@ impl Escrow {
         }
     }
 
+    /// Returns public-safe contract configuration (no admin or fee collector addresses).
+    pub fn get_public_config(env: Env) -> PublicContractConfig {
+        let fee_bps: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::DefaultFeeBps)
+            .unwrap_or(0);
+
+        let paused: bool = env
+            .storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false);
+
+        let current_counter: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::EscrowCounter)
+            .unwrap_or(1);
+        let escrow_count = current_counter.saturating_sub(1);
+
+        PublicContractConfig {
+            fee_bps,
+            paused,
+            escrow_count,
+        }
+    }
+
+    /// Returns full contract configuration including privileged addresses. Requires admin auth.
+    pub fn get_contract_config(env: Env) -> ContractConfig {
+        let admin = require_admin(&env);
+        admin.require_auth();
+
+        let fee_bps: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::DefaultFeeBps)
+            .unwrap_or(0);
     pub fn get_fee_config(env: Env) -> FeeConfig {
         read_fee_config(&env)
     }
@@ -955,6 +1001,16 @@ impl Escrow {
             fee_bps: fee_config.protocol_fee_bps,
             fee_collector,
             escrow_count,
+        }
+    }
+
+    /// Returns on-chain counters for escrow lifecycle events.
+    pub fn get_stats(env: Env) -> ContractStats {
+        ContractStats {
+            total_created: env.storage().instance().get(&DataKey::TotalCreated).unwrap_or(0),
+            total_completed: env.storage().instance().get(&DataKey::TotalCompleted).unwrap_or(0),
+            total_disputed: env.storage().instance().get(&DataKey::TotalDisputed).unwrap_or(0),
+            total_refunded: env.storage().instance().get(&DataKey::TotalRefunded).unwrap_or(0),
         }
     }
 

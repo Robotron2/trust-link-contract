@@ -155,6 +155,15 @@ pub struct ContractConfig {
     pub escrow_count: u64,
 }
 
+/// Public-safe contract configuration (no privileged addresses).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PublicContractConfig {
+    pub fee_bps: u32,
+    pub paused: bool,
+    pub escrow_count: u64,
+}
+
 /// On-chain lifecycle counters exposed by `get_stats`.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
