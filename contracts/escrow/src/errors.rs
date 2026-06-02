@@ -53,4 +53,7 @@ pub enum ContractError {
     InvalidTrackingId = 21,
     /// Returned when auto-release is attempted before delivery has been recorded.
     DeliveryNotRecorded = 22,
+    /// Returned when two roles that must be distinct are assigned the same address
+    /// (e.g. resolver == seller, buyer == seller, or buyer == resolver).
+    ConflictingRoles = 23,
 }
