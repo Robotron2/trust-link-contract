@@ -911,7 +911,7 @@ fn test_event_integrity_full_lifecycle_all_events_decoded() {
 }
 
 // ---------------------------------------------------------------------------
-// get_contract_config / get_fee_config after each admin action — Issue #98
+// get_fee_config after each admin action — Issue #98
 // ---------------------------------------------------------------------------
 
 fn assert_fee_config(client: &EscrowClient, expected_protocol_bps: u32, expected_arbitration_bps: u32) {
