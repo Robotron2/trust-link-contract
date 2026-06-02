@@ -909,3 +909,151 @@ fn test_event_integrity_full_lifecycle_all_events_decoded() {
         ev.escrow_id == id2 as u64 && ev.resolution == ResolutionType::Refund
     }));
 }
+
+// ---------------------------------------------------------------------------
+// cancel_escrow tests — Issue #89
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_cancel_escrow_by_buyer_refunds_full_amount() {
+    let (env, admin, seller, buyer, resolver, token, fee_collector) = setup_env();
+    let contract_id = env.register(Escrow, ());
+    let client = EscrowClient::new(&env, &contract_id);
+    client.initialize(&admin, &fee_collector, &0_u32);
+
+    mint_tokens(&env, &token, &buyer, 1000);
+
+    let id = client.create_escrow(&seller, &None::<Address>, &resolver, &token, &500_i128, &200_u32, &3600_u64);
+    client.fund_escrow(&id, &buyer);
+
+    assert_eq!(get_balance(&env, &token, &buyer), 500);
+    assert_eq!(get_balance(&env, &token, &contract_id), 500);
+
+    client.cancel_escrow(&buyer, &id);
+
+    let escrow = client.get_escrow(&id);
+    assert_eq!(escrow.state, EscrowState::Refunded);
+
+    assert_eq!(get_balance(&env, &token, &buyer), 1000);
+    assert_eq!(get_balance(&env, &token, &contract_id), 0);
+    assert_eq!(get_balance(&env, &token, &seller), 0);
+    assert_eq!(get_balance(&env, &token, &fee_collector), 0);
+}
+
+#[test]
+fn test_cancel_escrow_state_transitions_correctly() {
+    let (env, admin, seller, buyer, resolver, token, _fee_collector) = setup_env();
+    let contract_id = env.register(Escrow, ());
+    let client = EscrowClient::new(&env, &contract_id);
+    client.initialize(&admin, &_fee_collector, &0_u32);
+
+    mint_tokens(&env, &token, &buyer, 1000);
+
+    let id = client.create_escrow(&seller, &None::<Address>, &resolver, &token, &300_i128, &100_u32, &7200_u64);
+    let escrow = client.get_escrow(&id);
+    assert_eq!(escrow.state, EscrowState::Pending);
+    assert!(escrow.buyer.is_none());
+
+    client.fund_escrow(&id, &buyer);
+    let escrow = client.get_escrow(&id);
+    assert_eq!(escrow.state, EscrowState::Funded);
+    assert_eq!(escrow.buyer, Some(buyer.clone()));
+
+    client.cancel_escrow(&buyer, &id);
+    let escrow = client.get_escrow(&id);
+    assert_eq!(escrow.state, EscrowState::Refunded);
+    assert_eq!(escrow.buyer, Some(buyer));
+}
+
+#[test]
+fn test_cancel_escrow_pending_escrow_fails() {
+    let (env, admin, seller, buyer, resolver, token, _fee_collector) = setup_env();
+    let contract_id = env.register(Escrow, ());
+    let client = EscrowClient::new(&env, &contract_id);
+    client.initialize(&admin, &_fee_collector, &0_u32);
+
+    let id = client.create_escrow(&seller, &None::<Address>, &resolver, &token, &500_i128, &200_u32, &3600_u64);
+    let res = client.try_cancel_escrow(&buyer, &id);
+    assert!(matches!(res, Err(Ok(ContractError::InvalidState))));
+}
+
+#[test]
+fn test_cancel_escrow_completed_escrow_fails() {
+    let (env, admin, seller, buyer, resolver, token, _fee_collector) = setup_env();
+    let contract_id = env.register(Escrow, ());
+    let client = EscrowClient::new(&env, &contract_id);
+    client.initialize(&admin, &_fee_collector, &0_u32);
+
+    mint_tokens(&env, &token, &buyer, 1000);
+
+    let id = client.create_escrow(&seller, &None::<Address>, &resolver, &token, &1000_i128, &200_u32, &3600_u64);
+    client.fund_escrow(&id, &buyer);
+    client.mark_shipped(&seller, &id, &SorobanString::from_str(&env, "TRK-CANCEL"));
+    let escrow = client.get_escrow(&id);
+    env.ledger().set_timestamp(escrow.dispute_deadline + 1);
+    client.confirm_delivery(&buyer, &id);
+
+    let res = client.try_cancel_escrow(&buyer, &id);
+    assert!(matches!(res, Err(Ok(ContractError::InvalidState))));
+}
+
+#[test]
+fn test_cancel_escrow_already_cancelled_fails() {
+    let (env, admin, seller, buyer, resolver, token, _fee_collector) = setup_env();
+    let contract_id = env.register(Escrow, ());
+    let client = EscrowClient::new(&env, &contract_id);
+    client.initialize(&admin, &_fee_collector, &0_u32);
+
+    mint_tokens(&env, &token, &buyer, 1000);
+
+    let id = client.create_escrow(&seller, &None::<Address>, &resolver, &token, &500_i128, &200_u32, &3600_u64);
+    client.fund_escrow(&id, &buyer);
+    client.cancel_escrow(&buyer, &id);
+
+    let res = client.try_cancel_escrow(&buyer, &id);
+    assert!(matches!(res, Err(Ok(ContractError::InvalidState))));
+}
+
+#[test]
+fn test_cancel_escrow_with_zero_fee() {
+    let (env, admin, seller, buyer, resolver, token, _fee_collector) = setup_env();
+    let contract_id = env.register(Escrow, ());
+    let client = EscrowClient::new(&env, &contract_id);
+    client.initialize(&admin, &_fee_collector, &0_u32);
+
+    mint_tokens(&env, &token, &buyer, 500);
+
+    let id = client.create_escrow(&seller, &None::<Address>, &resolver, &token, &500_i128, &0_u32, &3600_u64);
+    client.fund_escrow(&id, &buyer);
+    client.cancel_escrow(&buyer, &id);
+
+    let escrow = client.get_escrow(&id);
+    assert_eq!(escrow.state, EscrowState::Refunded);
+
+    assert_eq!(get_balance(&env, &token, &buyer), 500);
+    assert_eq!(get_balance(&env, &token, &contract_id), 0);
+}
+
+#[test]
+fn test_cancel_escrow_preserves_escrow_metadata() {
+    let (env, admin, seller, buyer, resolver, token, _fee_collector) = setup_env();
+    let contract_id = env.register(Escrow, ());
+    let client = EscrowClient::new(&env, &contract_id);
+    client.initialize(&admin, &_fee_collector, &0_u32);
+
+    mint_tokens(&env, &token, &buyer, 2000);
+
+    let id = client.create_escrow(&seller, &None::<Address>, &resolver, &token, &1500_i128, &250_u32, &86400_u64);
+    client.fund_escrow(&id, &buyer);
+    client.cancel_escrow(&buyer, &id);
+
+    let escrow = client.get_escrow(&id);
+    assert_eq!(escrow.seller, seller);
+    assert_eq!(escrow.buyer, Some(buyer));
+    assert_eq!(escrow.resolver, resolver);
+    assert_eq!(escrow.token, token);
+    assert_eq!(escrow.amount, 1500);
+    assert_eq!(escrow.fee_bps, 250);
+    assert_eq!(escrow.shipping_window, 86400);
+    assert_eq!(escrow.state, EscrowState::Refunded);
+}
