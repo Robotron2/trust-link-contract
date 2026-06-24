@@ -20,6 +20,8 @@ pub enum DataKey {
     TotalRefunded,
     FeeConfig,
     BuyerEscrowIndex(Address),
+    MinAmount,
+    MaxAmount,
 }
 
 #[contracttype]
