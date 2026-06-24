@@ -12,12 +12,12 @@ pub use crate::events::{
     AdminRotated, AutoReleased, ContractInitialized, ContractPausedEvent, ContractUnpausedEvent,
     DeliveryRecorded, DisputeRaised, DisputeResolved, EscrowCancelled, EscrowCompleted,
     EscrowCreated, EscrowFunded, EscrowShipped, FeeUpdated, FeesWithdrawn, ArbitrationFeeUpdated,
-    ProtocolFeeUpdated, ResolverRotated,
+    ProtocolFeeUpdated, ResolverRotated, RefundRequestedEvent, RefundApprovedEvent,
     emit_admin_rotated, emit_auto_released, emit_contract_initialized, emit_contract_paused,
     emit_contract_unpaused, emit_delivery_recorded, emit_dispute_raised, emit_dispute_resolved,
     emit_escrow_cancelled, emit_escrow_completed, emit_escrow_created, emit_escrow_funded,
     emit_escrow_shipped, emit_fee_updated, emit_fees_withdrawn, emit_arbitration_fee_updated,
-    emit_protocol_fee_updated, emit_resolver_rotated,
+    emit_protocol_fee_updated, emit_resolver_rotated, emit_refund_requested, emit_refund_approved,
 };
 pub use crate::types::{
     ContractConfig, ContractStats, DataKey, DisputeData, DisputeStatus, EscrowState,
@@ -81,14 +81,18 @@ pub fn transition_state(
         let allowed = matches!(
             (from, to),
             (Pending, Funded)
-                |     (Pending, Canceled)
+                | (Pending, Canceled)
                 | (Funded, Shipped)
                 | (Funded, Completed)
                 | (Funded, Disputed)
+                | (Funded, RefundRequested)
                 | (Funded, Refunded)
                 | (Shipped, Completed)
                 | (Shipped, Disputed)
+                | (Shipped, RefundRequested)
                 | (Shipped, Refunded)
+            | (RefundRequested, Disputed)
+            | (RefundRequested, Refunded)
             | (Disputed, Completed)
             | (Disputed, Refunded)
     );
@@ -857,7 +861,53 @@ impl Escrow {
         Ok(())
     }
 
+    pub fn request_refund(env: Env, caller: Address, escrow_id: u64) -> Result<(), ContractError> {
+        caller.require_auth();
+        ensure_not_paused(&env)?;
+        let mut escrow = load_escrow(&env, escrow_id)?;
 
+        let buyer = escrow.buyer.clone().ok_or(ContractError::EscrowHasNoBuyer)?;
+        if caller != buyer {
+            return Err(ContractError::NotAuthorized);
+        }
+
+        if escrow.state != EscrowState::Funded && escrow.state != EscrowState::Shipped {
+            return Err(ContractError::InvalidState);
+        }
+
+        escrow.state = EscrowState::RefundRequested;
+        save_escrow(&env, escrow_id, &escrow);
+
+        crate::events::emit_refund_requested(&env, escrow_id, buyer);
+        Ok(())
+    }
+
+    pub fn approve_refund(env: Env, caller: Address, escrow_id: u64) -> Result<(), ContractError> {
+        caller.require_auth();
+        ensure_not_paused(&env)?;
+        let mut escrow = load_escrow(&env, escrow_id)?;
+
+        if caller != escrow.seller {
+            return Err(ContractError::NotAuthorized);
+        }
+
+        if escrow.state != EscrowState::RefundRequested {
+            return Err(ContractError::InvalidState);
+        }
+
+        let buyer = escrow.buyer.clone().ok_or(ContractError::EscrowHasNoBuyer)?;
+
+        // Transfer full amount directly to buyer
+        let token_client = token::Client::new(&env, &escrow.token);
+        token_client.transfer(&env.current_contract_address(), &buyer, &escrow.amount);
+
+        escrow.state = EscrowState::Refunded;
+        save_escrow(&env, escrow_id, &escrow);
+        increment_counter(&env, &DataKey::TotalRefunded)?;
+
+        crate::events::emit_refund_approved(&env, escrow_id, escrow.seller.clone(), escrow.amount);
+        Ok(())
+    }
 
     pub fn resolve_dispute(env: Env, caller: Address, escrow_id: u64, resolution: ResolutionType) -> Result<(), ContractError> {
         // SECURITY:
@@ -1192,3 +1242,4 @@ mod test_concurrent_vendor_escrows;
 mod test_not_found;
 mod test_get_escrows_by_vendor;
 mod test_resolver_rotation;
+mod test_refund_flow;

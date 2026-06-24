@@ -14,10 +14,11 @@ fn all_seven_states_are_defined() {
         EscrowState::Shipped,
         EscrowState::Completed,
         EscrowState::Disputed,
+        EscrowState::RefundRequested,
         EscrowState::Refunded,
         EscrowState::Canceled,
     ];
-    assert_eq!(states.len(), 7);
+    assert_eq!(states.len(), 8);
 }
 
 #[test]
@@ -26,10 +27,16 @@ fn legal_transitions_are_accepted() {
         (EscrowState::Pending, EscrowState::Funded),
         (EscrowState::Pending, EscrowState::Canceled),
         (EscrowState::Funded, EscrowState::Shipped),
+        (EscrowState::Funded, EscrowState::Completed),
+        (EscrowState::Funded, EscrowState::Disputed),
+        (EscrowState::Funded, EscrowState::RefundRequested),
         (EscrowState::Funded, EscrowState::Refunded),
         (EscrowState::Shipped, EscrowState::Completed),
         (EscrowState::Shipped, EscrowState::Disputed),
+        (EscrowState::Shipped, EscrowState::RefundRequested),
         (EscrowState::Shipped, EscrowState::Refunded),
+        (EscrowState::RefundRequested, EscrowState::Disputed),
+        (EscrowState::RefundRequested, EscrowState::Refunded),
         (EscrowState::Disputed, EscrowState::Completed),
         (EscrowState::Disputed, EscrowState::Refunded),
     ];
@@ -58,8 +65,6 @@ fn illegal_transitions_are_rejected() {
         (EscrowState::Canceled, EscrowState::Pending),
         // Cannot dispute a Pending escrow that was never funded.
         (EscrowState::Pending, EscrowState::Disputed),
-        // Cannot skip shipment.
-        (EscrowState::Funded, EscrowState::Completed),
     ];
     for (from, to) in illegal {
         assert_eq!(
@@ -81,6 +86,7 @@ fn self_loops_are_illegal() {
         EscrowState::Shipped,
         EscrowState::Completed,
         EscrowState::Disputed,
+        EscrowState::RefundRequested,
         EscrowState::Refunded,
         EscrowState::Canceled,
     ] {
