@@ -318,7 +318,6 @@ fn transfer_with_protocol_fee(
     env: &Env,
     token_addr: &Address,
     recipient: &Address,
-    fee_collector: &Address,
     amount: i128,
     fee_bps: u32,
 ) -> Result<(i128, i128), ContractError> {
@@ -331,7 +330,12 @@ fn transfer_with_protocol_fee(
     }
 
     if fee > 0 {
-        token_client.transfer(&contract_addr, fee_collector, &fee);
+        let acc_key = DataKey::AccumulatedFees(token_addr.clone());
+        let current_acc: i128 = env.storage().instance().get(&acc_key).unwrap_or(0);
+        let new_acc = current_acc
+            .checked_add(fee)
+            .ok_or(ContractError::ArithmeticError)?;
+        env.storage().instance().set(&acc_key, &new_acc);
     }
 
     Ok((fee, net))
@@ -829,17 +833,11 @@ impl Escrow {
         }
 
         let fee_config = read_fee_config(&env);
-        let fee_collector: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::FeeCollector)
-            .ok_or(ContractError::NotAuthorized)?;
 
         transfer_with_protocol_fee(
             &env,
             &escrow.token,
             &escrow.seller,
-            &fee_collector,
             escrow.amount,
             fee_config.protocol_fee_bps,
         )?;
@@ -998,17 +996,11 @@ impl Escrow {
         }
 
         let fee_config = read_fee_config(&env);
-        let fee_collector: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::FeeCollector)
-            .ok_or(ContractError::NotAuthorized)?;
 
         transfer_with_protocol_fee(
             &env,
             &escrow.token,
             &escrow.seller,
-            &fee_collector,
             escrow.amount,
             fee_config.protocol_fee_bps,
         )?;
@@ -1109,6 +1101,11 @@ impl Escrow {
         read_fee_config(&env)
     }
 
+    pub fn get_accumulated_fees(env: Env, token: Address) -> i128 {
+        let key = DataKey::AccumulatedFees(token);
+        env.storage().instance().get(&key).unwrap_or(0)
+    }
+
     /// Rotates the resolver for an escrow. Callable by the seller or admin.
     /// New resolver must differ from current resolver, seller, and buyer.
     pub fn rotate_resolver(
@@ -1192,3 +1189,4 @@ mod test_concurrent_vendor_escrows;
 mod test_not_found;
 mod test_get_escrows_by_vendor;
 mod test_resolver_rotation;
+mod test_accumulated_fees;
