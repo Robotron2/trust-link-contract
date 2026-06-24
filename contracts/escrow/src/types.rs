@@ -94,6 +94,18 @@ pub enum EscrowState {
     Shipped,
     Completed,
     Disputed,
+    RefundRequested,
     Refunded,
     Canceled,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EscrowCreationRequest {
+    pub buyer: Option<Address>,
+    pub resolver: Address,
+    pub token: Address,
+    pub amount: i128,
+    pub fee_bps: u32,
+    pub shipping_window: u64,
 }
