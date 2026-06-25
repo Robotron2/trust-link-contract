@@ -1231,4 +1231,5 @@ mod test_concurrent_vendor_escrows;
 mod test_not_found;
 mod test_get_escrows_by_vendor;
 mod test_resolver_rotation;
+mod test_double_funding;
 mod test_storage_collision;
