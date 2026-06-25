@@ -12,12 +12,12 @@ pub use crate::events::{
     AdminRotated, AutoReleased, ContractInitialized, ContractPausedEvent, ContractUnpausedEvent,
     DeliveryRecorded, DisputeRaised, DisputeResolved, EscrowCancelled, EscrowCompleted,
     EscrowCreated, EscrowFunded, EscrowShipped, FeeUpdated, FeesWithdrawn, ArbitrationFeeUpdated,
-    ProtocolFeeUpdated, ResolverRotated, RefundRequestedEvent, RefundApprovedEvent, AmountLimitsUpdatedEvent,
+    ProtocolFeeUpdated, ResolverRotated, AmountLimitsUpdatedEvent,
     emit_admin_rotated, emit_auto_released, emit_contract_initialized, emit_contract_paused,
     emit_contract_unpaused, emit_delivery_recorded, emit_dispute_raised, emit_dispute_resolved,
     emit_escrow_cancelled, emit_escrow_completed, emit_escrow_created, emit_escrow_funded,
     emit_escrow_shipped, emit_fee_updated, emit_fees_withdrawn, emit_arbitration_fee_updated,
-    emit_protocol_fee_updated, emit_resolver_rotated, emit_refund_requested, emit_refund_approved,
+    emit_protocol_fee_updated, emit_resolver_rotated,
     emit_amount_limits_updated,
 };
 pub use crate::types::{

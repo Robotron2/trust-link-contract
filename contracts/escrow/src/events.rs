@@ -447,3 +447,22 @@ pub fn emit_resolver_rotated(
         },
     );
 }
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AmountLimitsUpdatedEvent {
+    pub min_amount: i128,
+    pub max_amount: i128,
+    pub timestamp: u64,
+}
+
+pub fn emit_amount_limits_updated(env: &Env, min_amount: i128, max_amount: i128) {
+    env.events().publish(
+        (Symbol::new(env, "amount_limits_updated"),),
+        AmountLimitsUpdatedEvent {
+            min_amount,
+            max_amount,
+            timestamp: env.ledger().timestamp(),
+        },
+    );
+}
