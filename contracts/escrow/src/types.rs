@@ -25,6 +25,8 @@ pub enum DataKey {
     TokenAllowlist,
     PlatformFeeBps,
     Treasury,
+    MinAmount,
+    MaxAmount,
 }
 
 #[contracttype]
@@ -100,6 +102,19 @@ pub struct EscrowData {
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EscrowInput {
+    pub buyer: Option<Address>,
+    pub resolver: Address,
+    pub token: Address,
+    pub amount: i128,
+    pub fee_bps: u32,
+    pub shipping_window: u64,
+    pub notes: Option<String>,
+}
+
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Message {
     pub sender: Address,
     pub timestamp: u64,
@@ -124,6 +139,7 @@ pub enum EscrowState {
     Shipped,
     Completed,
     Disputed,
+    RefundRequested,
     Refunded,
     Canceled,
     PendingFinalization,

@@ -598,6 +598,13 @@ pub fn emit_basket_escrow_created(
             escrow_id,
             seller,
             token_count,
+            timestamp: env.ledger().timestamp(),
+        },
+    );
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MessagePosted {
     pub escrow_id: u64,
     pub sender: Address,
@@ -615,3 +622,44 @@ pub fn emit_message_posted(env: &Env, escrow_id: u64, sender: Address) {
         },
     );
 }
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RefundRequestedEvent {
+    pub escrow_id: u64,
+    pub buyer: Address,
+    pub timestamp: u64,
+}
+
+/// Topic: `(\"refund_requested\",)`, data: `RefundRequestedEvent`.
+pub fn emit_refund_requested(env: &Env, escrow_id: u64, buyer: Address) {
+    env.events().publish(
+        (Symbol::new(env, "refund_requested"),),
+        RefundRequestedEvent {
+            escrow_id,
+            buyer,
+            timestamp: env.ledger().timestamp(),
+        },
+    );
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RefundApprovedEvent {
+    pub escrow_id: u64,
+    pub seller: Address,
+    pub timestamp: u64,
+}
+
+/// Topic: `(\"refund_approved\",)`, data: `RefundApprovedEvent`.
+pub fn emit_refund_approved(env: &Env, escrow_id: u64, seller: Address) {
+    env.events().publish(
+        (Symbol::new(env, "refund_approved"),),
+        RefundApprovedEvent {
+            escrow_id,
+            seller,
+            timestamp: env.ledger().timestamp(),
+        },
+    );
+}
+

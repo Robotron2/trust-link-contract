@@ -23,19 +23,15 @@ pub use crate::events::{
     ContractUnpausedEvent, DeliveryRecorded, DisputeRaised, DisputeResolved, EscrowCancelled,
     EscrowCompleted, EscrowCreated, EscrowFunded, EscrowShipped, FeeUpdated, FeesWithdrawn,
     ProtocolFeeUpdated, ResolverRotated,
-    emit_admin_rotated, emit_auto_released, emit_contract_initialized, emit_contract_paused,
-    emit_contract_unpaused, emit_delivery_recorded, emit_dispute_raised, emit_dispute_resolved,
-    emit_escrow_cancelled, emit_escrow_completed, emit_escrow_created, emit_escrow_funded,
-    emit_escrow_shipped, emit_fee_updated, emit_fees_withdrawn, emit_arbitration_fee_updated,
-    emit_protocol_fee_updated, emit_resolver_rotated,
+
     emit_token_allowlist_updated, emit_allowlist_toggled,
     emit_dispute_pending_finalization, emit_dispute_appealed,
     emit_platform_fee_updated, emit_treasury_updated,
-    emit_basket_escrow_created,
+    emit_basket_escrow_created, emit_refund_requested, emit_refund_approved,
 };
 pub use crate::types::{
     ContractConfig, ContractStats, DataKey, DisputeData, DisputeStatus, EscrowData, EscrowState,
-    FeeConfig, PublicContractConfig, ResolutionType,
+    FeeConfig, PublicContractConfig, ResolutionType, EscrowInput,
 };
 
 /// Maximum escrow fee in basis points (300 = 3%).
@@ -115,6 +111,8 @@ pub fn transition_state(from: &EscrowState, to: &EscrowState) -> Result<(), Cont
             | (Funded, Shipped)
             | (Funded, Disputed)
             | (Funded, Refunded)
+            | (Funded, RefundRequested)
+            | (RefundRequested, Refunded)
             | (Shipped, Completed)
             | (Shipped, Disputed)
             | (Shipped, Refunded)
@@ -222,26 +220,7 @@ fn write_treasury(env: &Env, treasury: &Address) {
     env.storage().instance().set(&DataKey::Treasury, treasury);
 }
 
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct EscrowData {
-    pub seller: Address,
-    pub buyer: Option<Address>,
-    pub resolver: Address,
-    pub token: Address,
-    pub amount: i128,
-    pub fee_bps: u32,
-    pub shipping_window: u64,
-    pub funded_at: u64,
-    pub dispute_deadline: u64,
-    pub shipped_at: u64,
-    pub delivered_at: Option<u64>,
-    pub tracking_id: Option<String>,
-    pub state: EscrowState,
-    env.storage()
-        .instance()
-        .set(&DataKey::FeeConfig, fee_config);
-}
+
 
 fn validate_escrow_fee_bps(fee_bps: u32) -> Result<(), ContractError> {
     if fee_bps > MAX_ESCROW_FEE_BPS {
@@ -455,12 +434,15 @@ fn create_escrow_internal(
     if amount <= 0 {
         return Err(ContractError::InvalidAmount);
     }
-    if amount > MAX_ESCROW_AMOUNT {
+
+    let max_amount = env.storage().instance().get(&DataKey::MaxAmount).unwrap_or(MAX_ESCROW_AMOUNT);
+    if amount > max_amount {
         return Err(ContractError::AmountExceedsMaximum);
     }
 
-    if amount < MIN_ESCROW_AMOUNT {
-        return Err(ContractError::InvalidAmount);
+    let min_amount = env.storage().instance().get(&DataKey::MinAmount).unwrap_or(MIN_ESCROW_AMOUNT);
+    if amount < min_amount {
+        return Err(ContractError::AmountBelowMinimum);
     }
 
     validate_escrow_fee_bps(fee_bps)?;
@@ -511,7 +493,7 @@ fn create_escrow_internal(
         shipped_at: 0,
         delivered_at: None,
         tracking_id: None,
-        notes,
+
     };
 
     save_escrow(env, escrow_id, &escrow);
@@ -752,59 +734,6 @@ impl Escrow {
         fee_bps: u32,
         shipping_window: u64,
     ) -> Result<u64, ContractError> {
-        // SECURITY:
-        // Authenticate before any state reads.
-        seller.require_auth();
-
-        ensure_not_paused(&env)?;
-
-        if amount <= 0 {
-            return Err(ContractError::InvalidAmount);
-        }
-        if amount > MAX_ESCROW_AMOUNT {
-            return Err(ContractError::AmountExceedsMaximum);
-        }
-
-        if amount < MIN_ESCROW_AMOUNT {
-            return Err(ContractError::InvalidAmount);
-        }
-
-        validate_escrow_fee_bps(fee_bps)?;
-
-        // Security: all three roles must be distinct to preserve the trustless
-        // three-party separation.  A resolver that equals the seller or buyer can
-        // unilaterally resolve disputes in their own favour; a buyer that equals
-        // the seller makes the escrow a self-dealing no-op.
-        if resolver == seller {
-            return Err(ContractError::ConflictingRoles);
-        }
-        if let Some(ref b) = buyer {
-            if b == &seller || b == &resolver {
-                return Err(ContractError::ConflictingRoles);
-            }
-        }
-
-        // Token allowlist check
-        is_token_allowed(&env, &token)?;
-
-        let escrow_id: u64 = env
-            .storage()
-            .instance()
-            .get(&DataKey::EscrowCounter)
-            .expect("counter initialized");
-        let next_id = escrow_id
-            .checked_add(1)
-            .ok_or(ContractError::ArithmeticError)?;
-        env.storage()
-            .instance()
-            .set(&DataKey::EscrowCounter, &next_id);
-
-        // Extend instance storage TTL on every counter access so the counter key
-        // cannot expire between a read and the subsequent write.
-        let ext = get_ttl_extension(&env);
-        env.storage().instance().extend_ttl(ext / 2, ext);
-
-        let escrow = EscrowData {
         create_escrow_internal(
             &env,
             seller,
@@ -1024,7 +953,6 @@ impl Escrow {
 
         ensure_not_paused(&env)?;
         let mut escrow = load_escrow(&env, escrow_id)?;
-        let buyer = escrow.buyer.clone();
 
         let buyer = escrow.buyer.clone();
         if escrow.seller != caller && buyer.as_ref() != Some(&caller) {
@@ -1209,69 +1137,6 @@ impl Escrow {
 
 
 
-    /// Resolves an active dispute. Callable by resolver or admin.
-    pub fn resolve_dispute(env: Env, caller: Address, escrow_id: u64, resolution: ResolutionType) -> Result<(), ContractError> {
-        // SECURITY:
-        // Authenticate before any state reads.
-    pub fn raise_dispute(
-        env: Env,
-        caller: Address,
-        escrow_id: u64,
-        reason: Symbol,
-        description: String,
-        evidence_hash: BytesN<32>,
-    ) -> Result<(), ContractError> {
-        caller.require_auth();
-
-        ensure_not_paused(&env)?;
-        let mut escrow = load_escrow(&env, escrow_id)?;
-
-        let buyer = escrow
-            .buyer
-            .clone()
-            .ok_or(ContractError::EscrowHasNoBuyer)?;
-        if caller != buyer {
-            return Err(ContractError::NotAuthorized);
-        }
-
-        if escrow.state != EscrowState::Shipped && escrow.state != EscrowState::Funded {
-            return Err(ContractError::InvalidState);
-        }
-
-        if env.ledger().timestamp() >= escrow.dispute_deadline {
-            return Err(ContractError::DisputeWindowClosed);
-        }
-
-        if description.len() > MAX_DESCRIPTION_LEN {
-            return Err(ContractError::InputTooLong);
-        }
-
-        escrow.state = EscrowState::Disputed;
-
-        let dispute_data = DisputeData {
-            escrow_id,
-            reason,
-            description,
-            evidence_hash,
-            status: DisputeStatus::Active,
-            disputed_at: env.ledger().timestamp(),
-            tracking_id: escrow.tracking_id.clone(),
-        };
-
-        save_escrow(&env, escrow_id, &escrow);
-        save_dispute(&env, escrow_id, &dispute_data);
-        increment_counter(&env, &DataKey::TotalDisputed)?;
-        emit_dispute_raised(
-            &env,
-            escrow_id,
-            buyer,
-            dispute_data.reason.clone(),
-            dispute_data.description.clone(),
-            dispute_data.evidence_hash.clone(),
-        );
-        Ok(())
-    }
-
     pub fn resolve_dispute(
         env: Env,
         caller: Address,
@@ -1348,8 +1213,8 @@ impl Escrow {
             escrow.fee_bps,
         )?;
 
-        let mut updated = escrow;
-        updated.state = match resolution {
+        let mut updated = escrow.clone();
+        updated.state = match resolution.clone() {
             ResolutionType::Release => EscrowState::Completed,
             ResolutionType::Refund => EscrowState::Refunded,
         };
@@ -1357,15 +1222,15 @@ impl Escrow {
         let mut dispute_data = load_dispute(&env, escrow_id)?;
         dispute_data.status = DisputeStatus::Resolved;
 
-        save_escrow(&env, escrow_id, &escrow);
+        save_escrow(&env, escrow_id, &updated);
         save_dispute(&env, escrow_id, &dispute_data);
 
         emit_dispute_pending_finalization(
             &env,
             escrow_id,
-            escrow.resolver.clone(),
+            updated.resolver.clone(),
             resolution,
-            escrow.amount,
+            updated.amount,
             appeal_deadline,
         );
         Ok(())
@@ -2024,6 +1889,105 @@ impl Escrow {
         emit_resolver_rotated(&env, escrow_id, old_resolver, new_resolver);
         Ok(())
     }
+
+    pub fn request_refund(env: Env, caller: Address, escrow_id: u64) -> Result<(), ContractError> {
+        caller.require_auth();
+        ensure_not_paused(&env)?;
+        let mut escrow = load_escrow(&env, escrow_id)?;
+
+        let buyer = escrow.buyer.clone().ok_or(ContractError::EscrowHasNoBuyer)?;
+        if caller != buyer {
+            return Err(ContractError::NotAuthorized);
+        }
+
+        if escrow.state != EscrowState::Funded {
+            return Err(ContractError::InvalidStateTransition);
+        }
+
+        escrow.state = EscrowState::RefundRequested;
+        save_escrow(&env, escrow_id, &escrow);
+
+        emit_refund_requested(&env, escrow_id, caller);
+        Ok(())
+    }
+
+    pub fn approve_refund(env: Env, caller: Address, escrow_id: u64) -> Result<(), ContractError> {
+        caller.require_auth();
+        ensure_not_paused(&env)?;
+        let mut escrow = load_escrow(&env, escrow_id)?;
+
+        if caller != escrow.seller {
+            return Err(ContractError::NotAuthorized);
+        }
+
+        if escrow.state != EscrowState::RefundRequested {
+            return Err(ContractError::InvalidStateTransition);
+        }
+
+        let buyer = escrow.buyer.clone().ok_or(ContractError::EscrowHasNoBuyer)?;
+
+        let token_client = token::Client::new(&env, &escrow.token);
+        token_client.transfer(&env.current_contract_address(), &buyer, &escrow.amount);
+
+        escrow.state = EscrowState::Refunded;
+        save_escrow(&env, escrow_id, &escrow);
+        increment_counter(&env, &DataKey::TotalRefunded)?;
+
+        emit_refund_approved(&env, escrow_id, caller);
+        Ok(())
+    }
+
+    pub fn batch_create_escrow(
+        env: Env,
+        seller: Address,
+        escrows: Vec<EscrowInput>,
+    ) -> Result<Vec<u64>, ContractError> {
+        seller.require_auth();
+        ensure_not_paused(&env)?;
+
+        let mut escrow_ids = Vec::new(&env);
+        for input in escrows.into_iter() {
+            let id = create_escrow_internal(
+                &env,
+                seller.clone(),
+                input.buyer,
+                input.resolver,
+                input.token,
+                input.amount,
+                input.fee_bps,
+                input.shipping_window,
+                input.notes,
+            )?;
+            escrow_ids.push_back(id);
+        }
+
+        Ok(escrow_ids)
+    }
+
+    pub fn set_amount_limits(
+        env: Env,
+        caller: Address,
+        min_amount: i128,
+        max_amount: i128,
+    ) -> Result<(), ContractError> {
+        caller.require_auth();
+        let admin = require_admin(&env)?;
+        if caller != admin {
+            return Err(ContractError::NotAuthorized);
+        }
+
+        if min_amount <= 0 || max_amount < min_amount {
+            return Err(ContractError::InvalidAmount);
+        }
+
+        env.storage().instance().set(&DataKey::MinAmount, &min_amount);
+        env.storage().instance().set(&DataKey::MaxAmount, &max_amount);
+        Ok(())
+    }
+
+    pub fn get_accumulated_fees(env: Env, token: Address) -> i128 {
+        env.storage().instance().get(&DataKey::AccumulatedFees(token)).unwrap_or(0)
+    }
 }
 
 mod test;
@@ -2062,3 +2026,7 @@ mod test_string_length;
 mod test_ttl;
 mod test_unauthorized;
 mod test_withdraw_fees;
+mod test_refund_flow;
+mod test_batch_create;
+mod test_amount_limits;
+mod test_accumulated_fees;
